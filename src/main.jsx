@@ -1,0 +1,3404 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { strToU8, zipSync } from "fflate";
+import {
+  ArrowUpRight,
+  Bell,
+  BookOpen,
+  CheckCircle2,
+  BriefcaseBusiness,
+  ChevronRight,
+  CircleHelp,
+  CircleDot,
+  Clock3,
+  Command,
+  Download,
+  ExternalLink,
+  FileText,
+  Link2,
+  MessageSquare,
+  Mic,
+  LockKeyhole,
+  Menu,
+  Moon,
+  Network,
+  Pause,
+  PhoneCall,
+  Plus,
+  RefreshCw,
+  Search,
+  Send,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Sun,
+  TrendingUp,
+  UserRound,
+  Users,
+  WalletCards,
+  X,
+} from "lucide-react";
+import "./styles.css";
+import { askContext, companyDetails } from "./data";
+
+const portfolioCompanyMetadata = {
+  ORIANA: { name: "Oriana Power Ltd", sector: "Renewable Energy" },
+  ESPRIT: { name: "Esprit Stones Ltd", sector: "Engineered Stones" },
+  FUSIONCX: { name: "Fusion CX Ltd", sector: "Business Services" },
+};
+const tickerAliases = { FUSION: "FUSIONCX" };
+
+function canonicalTicker(value = "") {
+  const base = String(value)
+    .toUpperCase()
+    .replace(/\.(NS|BO)$/i, "");
+  return tickerAliases[base] || base;
+}
+
+function saveDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function xmlEscape(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&apos;",
+      })[char],
+  );
+}
+
+function downloadPortfolioCsv(rows) {
+  const lines = [
+    [
+      "Company",
+      "Ticker",
+      "Price",
+      "Daily change",
+      "Sector",
+      "Volume",
+      "Price source",
+      "As of",
+    ],
+    ...rows.map((row) => [
+      row.name,
+      row.symbol,
+      row.price,
+      row.change,
+      row.sector,
+      row.volume ?? "",
+      row.priceSource || "Sample preview",
+      row.asOf || "",
+    ]),
+  ];
+  const csv = lines
+    .map((line) =>
+      line.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","),
+    )
+    .join("\r\n");
+  saveDownload(
+    new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }),
+    "FINN-portfolio.csv",
+  );
+}
+
+function downloadPortfolioXlsx(rows) {
+  const data = [
+    [
+      "Company",
+      "Ticker",
+      "Price",
+      "Daily change",
+      "Sector",
+      "Volume",
+      "Price source",
+      "As of",
+    ],
+    ...rows.map((row) => [
+      row.name,
+      row.symbol,
+      row.price,
+      row.change,
+      row.sector,
+      row.volume ?? "",
+      row.priceSource || "Sample preview",
+      row.asOf || "",
+    ]),
+  ];
+  const colName = (number) => {
+    let name = "";
+    while (number) {
+      const mod = (number - 1) % 26;
+      name = String.fromCharCode(65 + mod) + name;
+      number = Math.floor((number - mod) / 26);
+    }
+    return name;
+  };
+  const sheetRows = data
+    .map(
+      (row, rowIndex) =>
+        `<row r="${rowIndex + 1}">${row.map((value, colIndex) => `<c r="${colName(colIndex + 1)}${rowIndex + 1}" t="inlineStr"><is><t>${xmlEscape(value)}</t></is></c>`).join("")}</row>`,
+    )
+    .join("");
+  const files = {
+    "[Content_Types].xml": strToU8(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+    ),
+    "_rels/.rels": strToU8(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+    ),
+    "xl/workbook.xml": strToU8(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Portfolio" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    ),
+    "xl/_rels/workbook.xml.rels": strToU8(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+    ),
+    "xl/worksheets/sheet1.xml": strToU8(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`,
+    ),
+  };
+  saveDownload(
+    new Blob([zipSync(files, { level: 6 })], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+    "FINN-portfolio.xlsx",
+  );
+}
+
+const market = [
+  {
+    symbol: "TITAN",
+    name: "Titan Company",
+    sector: "Consumer",
+    price: "3,912.40",
+    change: "+2.84%",
+    tone: "positive",
+    volume: "2.4×",
+    note: "CFO transition · network match",
+  },
+  {
+    symbol: "DIXON",
+    name: "Dixon Technologies",
+    sector: "Electronics",
+    price: "11,842.10",
+    change: "+1.26%",
+    tone: "positive",
+    volume: "1.3×",
+    note: "Q2 results · narrative vs numbers",
+  },
+  {
+    symbol: "UNOMINDA",
+    name: "Uno Minda",
+    sector: "Auto ancillaries",
+    price: "1,128.65",
+    change: "-0.42%",
+    tone: "negative",
+    volume: "3.1×",
+    note: "Volume anomaly · capex signal",
+  },
+  {
+    symbol: "RELIANCE",
+    name: "Reliance Industries",
+    sector: "Diversified",
+    price: "2,946.30",
+    change: "+0.71%",
+    tone: "positive",
+    volume: "0.9×",
+    note: "Routine filing",
+  },
+  {
+    symbol: "INFY",
+    name: "Infosys",
+    sector: "IT Services",
+    price: "1,544.20",
+    change: "-1.05%",
+    tone: "negative",
+    volume: "1.8×",
+    note: "Investor meet scheduled",
+  },
+  {
+    symbol: "HDFCBANK",
+    name: "HDFC Bank",
+    sector: "Financials",
+    price: "1,744.80",
+    change: "+0.38%",
+    tone: "positive",
+    volume: "1.1×",
+    note: "Credit rating reaffirmed",
+  },
+];
+
+const people = [
+  {
+    name: "Arjun Mehta",
+    role: "Ex-Titan · Consumer strategy",
+    initials: "AM",
+    strength: "Warm · worked together",
+    tag: "Titan",
+  },
+  {
+    name: "Maya Krishnan",
+    role: "CFO, Northstar Capital",
+    initials: "MK",
+    strength: "2nd degree · Priya knows her",
+    tag: "Financials",
+  },
+  {
+    name: "Rohan Shah",
+    role: "Product, Auto components",
+    initials: "RS",
+    strength: "Warm · 4 shared connections",
+    tag: "Auto",
+  },
+  {
+    name: "Devika Rao",
+    role: "Ex-Dixon · Operations",
+    initials: "DR",
+    strength: "Cold · studied together",
+    tag: "Electronics",
+  },
+];
+
+function Logo() {
+  return (
+    <div className="logo-mark">
+      <img src="/assets/finn-logo.svg" alt="FINN" />
+    </div>
+  );
+}
+function IconButton({ children, label, onClick }) {
+  return (
+    <button className="icon-button" aria-label={label} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+function Header({ active, dark, setDark, setActive }) {
+  return (
+    <header className="topbar">
+      <div className="brand" onClick={() => setActive("push")}>
+        <Logo />
+        <div>
+          <div className="brand-line">
+            FINN <i></i>
+          </div>
+          <div className="brand-sub">
+            {active === "ask"
+              ? "Ask FINN"
+              : active === "profile"
+                ? "Executive Profile"
+                : active[0].toUpperCase() + active.slice(1)}
+          </div>
+        </div>
+      </div>
+      <div className="header-actions">
+        <IconButton label="Toggle theme" onClick={() => setDark(!dark)}>
+          {dark ? <Sun size={17} /> : <Moon size={17} />}
+        </IconButton>
+        <button
+          className="avatar"
+          onClick={() => setActive("profile")}
+          aria-label="Open executive profile"
+        >
+          KS
+        </button>
+      </div>
+    </header>
+  );
+}
+function BottomNav({ active, setActive }) {
+  const items = [
+    ["push", Bell],
+    ["pull", Search],
+    ["network", Network],
+    ["portfolio", WalletCards],
+  ];
+  return (
+    <nav className="bottom-nav">
+      {items.map(([key, I]) => (
+        <button
+          key={key}
+          className={active === key ? "active" : ""}
+          onClick={() => setActive(key)}
+        >
+          <I size={17} />
+          <span>{key[0].toUpperCase() + key.slice(1)}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+function SectionKicker({ children, right }) {
+  return (
+    <div className="section-kicker">
+      <span>{children}</span>
+      {right && <span className="kicker-right">{right}</span>}
+    </div>
+  );
+}
+function Push({ setActive }) {
+  const [range, setRange] = useState("24H");
+  const [notice, setNotice] = useState("");
+  const notify = (message) => {
+    setNotice(message);
+    window.setTimeout(() => setNotice(""), 2200);
+  };
+  return (
+    <main className="content push-view">
+      <div className="hero-row">
+        <div>
+          <SectionKicker right="LIVE · 09:41 IST">FINN TERMINAL</SectionKicker>
+          <h1>
+            What matters
+            <br />
+            <em>right now.</em>
+          </h1>
+          <p className="lede">
+            A quiet advantage across your portfolio, filings and people.
+          </p>
+        </div>
+        <div className="signal-orb">
+          <Sparkles size={18} />
+          <b>08</b>
+          <span>signals</span>
+        </div>
+      </div>
+      <div className="range-tabs">
+        {["24H", "3D", "7D", "30D"].map((v) => (
+          <button
+            className={range === v ? "selected" : ""}
+            onClick={() => setRange(v)}
+            key={v}
+          >
+            {v}
+          </button>
+        ))}
+        <button
+          className="filter-button"
+          onClick={() => notify("Digest filters are ready for configuration")}
+        >
+          <Settings2 size={15} />
+        </button>
+      </div>
+      <div className="digest-head">
+        <div>
+          <span className="eyebrow">PRIORITISED DIGEST</span>
+          <h2>Across your portfolio</h2>
+        </div>
+        <span className="live-dot">● 08 live</span>
+      </div>
+      <div className="insight-card featured">
+        <div className="card-top">
+          <span className="tag blue">MANAGEMENT CHANGE</span>
+          <span className="muted">12m ago</span>
+        </div>
+        <div className="card-title-row">
+          <div>
+            <h3>Titan's incoming CFO has a familiar path.</h3>
+            <p>
+              Neeraj Sethi joins from Asian Paints after 9 years in consumer
+              finance.
+            </p>
+          </div>
+          <div className="priority">P1</div>
+        </div>
+        <div className="dossier">
+          <div className="person-avatar">NS</div>
+          <div>
+            <strong>Neeraj Sethi</strong>
+            <span>Incoming CFO · Titan Company</span>
+          </div>
+          <button onClick={() => setActive("network")} className="inline-link">
+            View dossier <ChevronRight size={14} />
+          </button>
+        </div>
+        <div className="network-callout">
+          <div className="connection-icon">
+            <Link2 size={15} />
+          </div>
+          <div>
+            <span className="eyebrow">WARM RELATIONSHIP FOUND</span>
+            <p>Arjun Mehta worked with Neeraj at Asian Paints.</p>
+          </div>
+          <button onClick={() => setActive("network")}>
+            <ArrowUpRight size={15} />
+          </button>
+        </div>
+        <div className="card-actions">
+          <button onClick={() => notify("Opening Titan primary filing")}>
+            <BookOpen size={15} /> Open filing
+          </button>
+          <button onClick={() => setActive("network")}>
+            <Send size={15} /> Ask a connection
+          </button>
+        </div>
+      </div>
+      <div className="insight-card">
+        <div className="card-top">
+          <span className="tag green">AUDITED RESULTS</span>
+          <span className="muted">1h ago</span>
+        </div>
+        <h3>Dixon delivered the quarter. The story is more mixed.</h3>
+        <p>
+          Revenue accelerated YoY, but margin expansion is below the guidance
+          range.
+        </p>
+        <div className="metrics">
+          {[
+            ["Revenue", "₹1,253 cr", "+16.2%"],
+            ["EBITDA", "₹78 cr", "+9.1%"],
+            ["PAT", "₹44 cr", "+4.8%"],
+          ].map(([a, b, c]) => (
+            <div key={a}>
+              <span>{a}</span>
+              <strong>{b}</strong>
+              <small className="positive-text">{c}</small>
+            </div>
+          ))}
+        </div>
+        <div className="card-footer">
+          <span>
+            <FileText size={14} /> Q2 FY27 results · primary source
+          </span>
+          <button onClick={() => setActive("pull")}>
+            Deep research <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>
+      <div className="insight-card compact-card">
+        <div className="card-top">
+          <span className="tag amber">ANOMALY RADAR</span>
+          <span className="muted">3h ago</span>
+        </div>
+        <div className="compact-grid">
+          <div>
+            <h3>Uno Minda volume is 3.1× its 20-day average.</h3>
+            <p>New capex approval may explain the move. Worth a closer look.</p>
+          </div>
+          <div className="bars">
+            {[26, 35, 42, 30, 58, 72, 54, 82, 91].map((h, i) => (
+              <i key={i} style={{ height: h + "%" }} />
+            ))}
+          </div>
+        </div>
+      </div>
+      {notice && <div className="toast">{notice}</div>}
+    </main>
+  );
+}
+function Pull({ setActive }) {
+  const [ticker, setTicker] = useState("DIXON");
+  const [submitted, setSubmitted] = useState(false);
+  const [exported, setExported] = useState(false);
+  const detail = companyDetails[ticker] || companyDetails.DIXON;
+  return (
+    <main className="content pull-view">
+      <SectionKicker right="PRIMARY SOURCES ONLY">
+        PULL · RESEARCH
+      </SectionKicker>
+      <h1>
+        Ask a better
+        <br />
+        <em>question.</em>
+      </h1>
+      <p className="lede">
+        Research the business, then pressure-test the narrative against its
+        numbers.
+      </p>
+      <div className="research-box">
+        <Search size={18} />
+        <input
+          value={ticker}
+          onChange={(e) => setTicker(e.target.value.toUpperCase())}
+          placeholder="Enter NSE ticker"
+        />
+        <button aria-label="Run research" onClick={() => setSubmitted(true)}>
+          <ArrowUpRight size={17} />
+        </button>
+      </div>
+      <div className="suggestion-row">
+        {["DIXON", "TITAN", "RELIANCE", "UNOMINDA"].map((t) => (
+          <button
+            key={t}
+            onClick={() => {
+              setTicker(t);
+              setSubmitted(true);
+            }}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      {submitted && (
+        <div className="research-result">
+          <div className="result-header">
+            <div>
+              <span className="tag blue">RESEARCH BRIEF</span>
+              <h2>{detail.name} · numbers vs narrative</h2>
+              <small className="ticker-label">
+                {detail.exchange} · {detail.sector}
+              </small>
+            </div>
+            <span className="fresh">
+              <span />
+              Fresh · 2 min ago
+            </span>
+          </div>
+          <p className="result-summary">
+            {detail.snapshot} {detail.trajectory}
+          </p>
+          <div className="research-grid">
+            {[
+              ["Business", detail.snapshot],
+              ["Trajectory", detail.trajectory],
+              ["Cash quality", detail.cash],
+              ["Guidance", detail.guidance],
+            ].map(([a, b]) => (
+              <div key={a}>
+                <span>{a}</span>
+                <strong>{b}</strong>
+              </div>
+            ))}
+          </div>
+          <div className="metrics">
+            {detail.metrics.map(([a, b, c]) => (
+              <div key={a}>
+                <span>{a}</span>
+                <strong>{b}</strong>
+                <small className="positive-text">{c}</small>
+              </div>
+            ))}
+          </div>
+          <div className="source-row">
+            {detail.sources.map((source) => (
+              <span key={source}>
+                <FileText size={14} /> {source}
+              </span>
+            ))}
+          </div>
+          <div className="result-actions">
+            <button className="primary" onClick={() => setActive("ask")}>
+              <Sparkles size={15} /> Ask FINN about this
+            </button>
+            <button className="secondary" onClick={() => setExported(true)}>
+              Export brief <ExternalLink size={14} />
+            </button>
+          </div>
+          {exported && (
+            <div className="export-note">
+              Brief queued for export. Connect a document destination to
+              download it.
+            </div>
+          )}
+        </div>
+      )}
+      <div className="network-strip">
+        <div className="strip-icon">
+          <Users size={18} />
+        </div>
+        <div>
+          <span className="eyebrow">NETWORK CONTEXT</span>
+          <p>
+            <strong>4 people</strong> in your network have relevant operating
+            context on {detail.sector.toLowerCase()}.
+          </p>
+        </div>
+        <button onClick={() => setActive("network")}>
+          <ChevronRight size={17} />
+        </button>
+      </div>
+      <div className="recent-research">
+        <div className="section-title">
+          <span>Recent research</span>
+          <span className="muted">3 briefs</span>
+        </div>
+        {[
+          ["TITAN", "CFO transition · network overlap", "12 min ago"],
+          ["DIXON", "Q2 results · cash conversion", "Yesterday"],
+          ["UNOMINDA", "Capex signal · volume anomaly", "2 days ago"],
+        ].map(([symbol, title, time]) => (
+          <button
+            className="recent-item"
+            key={symbol}
+            onClick={() => {
+              setTicker(symbol);
+              setSubmitted(true);
+            }}
+          >
+            <span className="recent-symbol">{symbol.slice(0, 2)}</span>
+            <span>
+              <strong>{title}</strong>
+              <small>
+                {symbol} · {time}
+              </small>
+            </span>
+            <ChevronRight size={15} />
+          </button>
+        ))}
+      </div>
+    </main>
+  );
+}
+function NetworkView({ setActive }) {
+  const [selected, setSelected] = useState(null);
+  const [tab, setTab] = useState("For you");
+  const [notice, setNotice] = useState("");
+  return (
+    <main className="content network-view">
+      <SectionKicker right="PRIVATE TO YOU">NETWORK · SIGNALS</SectionKicker>
+      <div className="network-heading">
+        <div>
+          <h1>
+            Your quiet
+            <br />
+            <em>advantage.</em>
+          </h1>
+          <p className="lede">People, patterns and the right person to call.</p>
+        </div>
+        <div className="network-count">
+          <strong>128</strong>
+          <span>people</span>
+        </div>
+      </div>
+      <div className="network-search">
+        <Search size={17} />
+        <input placeholder="Search people, companies, sectors" />
+        <Command size={14} />
+      </div>
+      <div className="network-tabs">
+        {["For you", "People", "Expertise map"].map((label) => (
+          <button
+            key={label}
+            className={tab === label ? "active" : ""}
+            onClick={() => setTab(label)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="network-feature">
+        <div className="card-top">
+          <span className="tag green">BEST NEXT CALL</span>
+          <span className="muted">For Titan</span>
+        </div>
+        <h3>Arjun has lived through this exact transition.</h3>
+        <p>
+          He worked with the incoming CFO at Asian Paints and has 7 years across
+          consumer businesses.
+        </p>
+        <div className="person-row">
+          <div className="person-avatar large">AM</div>
+          <div>
+            <strong>Arjun Mehta</strong>
+            <span>Consumer strategy · Mumbai</span>
+          </div>
+          <button
+            className="call-button"
+            onClick={() =>
+              setNotice(
+                "Messaging will connect after Telegram/Gmail OAuth is enabled",
+              )
+            }
+          >
+            <Send size={15} /> Message
+          </button>
+        </div>
+      </div>
+      {selected && (
+        <div className="person-detail">
+          <div className="person-avatar large">{selected.initials}</div>
+          <div>
+            <span className="eyebrow">SELECTED CONTACT</span>
+            <h3>{selected.name}</h3>
+            <p>
+              {selected.role}. {selected.strength}. Relevant overlap:{" "}
+              {selected.tag}.
+            </p>
+          </div>
+          <button className="icon-button" onClick={() => setSelected(null)}>
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      <div className="section-title">
+        <span>Network matches</span>
+        <button onClick={() => setTab("People")}>
+          See all <ChevronRight size={14} />
+        </button>
+      </div>
+      <div className="people-list">
+        {people.map((p) => (
+          <button
+            className="person-list-item"
+            key={p.name}
+            onClick={() => setSelected(p)}
+          >
+            <div className="person-avatar">{p.initials}</div>
+            <div className="person-meta">
+              <strong>{p.name}</strong>
+              <span>{p.role}</span>
+              <small>
+                <span /> {p.strength}
+              </small>
+            </div>
+            <span className="person-tag">{p.tag}</span>
+            <ChevronRight size={16} />
+          </button>
+        ))}
+      </div>
+      {notice && <div className="toast">{notice}</div>}
+    </main>
+  );
+}
+function Portfolio() {
+  const [page, setPage] = useState(1);
+  const visible = market.slice((page - 1) * 3, page * 3);
+  return (
+    <main className="content portfolio-view">
+      <SectionKicker right="YAHOO FINANCE · EOD">
+        PORTFOLIO · MARKET
+      </SectionKicker>
+      <div className="portfolio-heading">
+        <div>
+          <h1>
+            Market,
+            <br />
+            <em>filtered.</em>
+          </h1>
+          <p className="lede">Your 18 holdings, one view of what changed.</p>
+        </div>
+        <div className="portfolio-total">
+          <span>Total value</span>
+          <strong>₹42.8L</strong>
+          <small className="positive-text">+1.82% today</small>
+        </div>
+      </div>
+      <div className="market-summary">
+        <div>
+          <span>Portfolio</span>
+          <strong>+₹76,420</strong>
+        </div>
+        <div>
+          <span>Advancers</span>
+          <strong>
+            12 <i className="positive-text">of 18</i>
+          </strong>
+        </div>
+        <div>
+          <span>Last sync</span>
+          <strong>
+            09:38 <i>IST</i>
+          </strong>
+        </div>
+      </div>
+      <div className="section-title">
+        <span>Holdings</span>
+        <span className="muted">Page {page} of 2</span>
+      </div>
+      <div className="holdings-list">
+        {visible.map((s, i) => (
+          <div className="holding" key={s.symbol}>
+            <div className="holding-symbol">{s.symbol.slice(0, 2)}</div>
+            <div className="holding-name">
+              <strong>{s.name}</strong>
+              <span>
+                {s.sector} · {s.volume} vol
+              </span>
+            </div>
+            <div className="holding-price">
+              <strong>₹{s.price}</strong>
+              <span
+                className={
+                  s.tone === "positive" ? "positive-text" : "negative-text"
+                }
+              >
+                {s.change}
+              </span>
+            </div>
+            <ChevronRight size={16} />
+          </div>
+        ))}
+      </div>
+      <div className="pagination">
+        <button disabled={page === 1} onClick={() => setPage(1)}>
+          ‹
+        </button>
+        <span>{page}</span>
+        <button disabled={page === 2} onClick={() => setPage(2)}>
+          ›
+        </button>
+      </div>
+    </main>
+  );
+}
+function Profile({ setActive }) {
+  const [notice, setNotice] = useState("");
+  return (
+    <main className="content profile-view">
+      <SectionKicker right="PRIVATE WORKSPACE">EXECUTIVE PROFILE</SectionKicker>
+      <div className="profile-hero">
+        <div className="profile-avatar">KS</div>
+        <div>
+          <h1>Karan Sharma</h1>
+          <p className="lede">Public markets · Mumbai</p>
+        </div>
+        <button
+          className="icon-button"
+          onClick={() =>
+            setNotice("Profile editing will be connected to workspace settings")
+          }
+          aria-label="Edit profile"
+        >
+          <Settings2 size={16} />
+        </button>
+      </div>
+      <div className="profile-stats">
+        <div>
+          <span>Portfolio</span>
+          <strong>18 companies</strong>
+        </div>
+        <div>
+          <span>Network</span>
+          <strong>128 people</strong>
+        </div>
+        <div>
+          <span>Last active</span>
+          <strong>09:41 IST</strong>
+        </div>
+      </div>
+      <div className="profile-section">
+        <div className="section-title">
+          <span>Alert preferences</span>
+          <span className="muted">3 active</span>
+        </div>
+        {[
+          [
+            "Material announcements",
+            "Results, M&A and management change",
+            Bell,
+          ],
+          [
+            "Unusual market moves",
+            "Price ±3% or volume 2× average",
+            TrendingUp,
+          ],
+          ["Network context", "Surface warm relationships in Push", Users],
+        ].map(([title, description, Icon]) => (
+          <button
+            className="setting-row"
+            key={title}
+            onClick={() =>
+              setNotice(`${title} settings are ready for configuration`)
+            }
+          >
+            <span className="setting-icon">
+              <Icon size={16} />
+            </span>
+            <span>
+              <strong>{title}</strong>
+              <small>{description}</small>
+            </span>
+            <span className="setting-toggle">ON</span>
+          </button>
+        ))}
+      </div>
+      <div className="profile-section">
+        <div className="section-title">
+          <span>Connected sources</span>
+        </div>
+        <div className="source-setting">
+          <span className="setting-icon">
+            <FileText size={16} />
+          </span>
+          <span>
+            <strong>Primary company documents</strong>
+            <small>Annual reports · filings · concalls</small>
+          </span>
+          <span className="connected">READY</span>
+        </div>
+        <div className="source-setting">
+          <span className="setting-icon">
+            <ShieldCheck size={16} />
+          </span>
+          <span>
+            <strong>Network privacy</strong>
+            <small>Private to this workspace</small>
+          </span>
+          <span className="connected">PROTECTED</span>
+        </div>
+      </div>
+      <div className="profile-cta">
+        <div>
+          <span className="eyebrow">FINN TERMINAL</span>
+          <p>Manage integrations and export controls from your workspace.</p>
+        </div>
+        <button onClick={() => setActive("ask")}>
+          <Sparkles size={15} /> Ask FINN
+        </button>
+      </div>
+      {notice && <div className="toast">{notice}</div>}
+    </main>
+  );
+}
+
+function Ask({ setActive }) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [answer, setAnswer] = useState("");
+  const [provider, setProvider] = useState("");
+  const submit = async () => {
+    if (!query.trim()) return;
+    setStatus("loading");
+    setAnswer("");
+    try {
+      const upper = query.toUpperCase();
+      const context = askContext.filter(
+        (item) =>
+          upper.includes(item.ticker) ||
+          upper.includes(item.company.split(" ")[0].toUpperCase()),
+      );
+      const response = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query,
+          context: context.length ? context : askContext,
+          network: [
+            {
+              name: "Arjun Mehta",
+              relationship: "worked with Neeraj Sethi at Asian Paints",
+            },
+          ],
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "FINN is unavailable");
+      const text =
+        data.answer ||
+        data.choices?.[0]?.message?.content ||
+        data.candidates?.[0]?.content?.parts
+          ?.map((part) => part.text)
+          .join("\n") ||
+        "FINN returned no answer.";
+      setAnswer(text);
+      setProvider(data.provider || "FINN");
+      setStatus("done");
+    } catch (error) {
+      setAnswer(
+        `${error.message}. Check the API environment variables or try again.`,
+      );
+      setProvider("Unavailable");
+      setStatus("error");
+    }
+  };
+  return (
+    <main className="content ask-view">
+      <div className="ask-hero">
+        <div className="ask-orb">
+          <Sparkles size={24} />
+        </div>
+        <SectionKicker>ASK FINN</SectionKicker>
+        <h1>
+          What are you
+          <br />
+          <em>curious about?</em>
+        </h1>
+        <p className="lede">
+          Ask about a company, a signal or who you should call. FINN will show
+          its work.
+        </p>
+      </div>
+      <div className="prompt-chips">
+        {[
+          "What changed at Titan?",
+          "Who knows Dixon?",
+          "Explain the cash quality",
+        ].map((q) => (
+          <button key={q} onClick={() => setQuery(q)}>
+            {q}
+            <ArrowUpRight size={14} />
+          </button>
+        ))}
+      </div>
+      <div className="ask-input">
+        <textarea
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Ask FINN anything…"
+        />
+        <div>
+          <span>
+            <LockKeyhole size={13} /> Grounded in primary sources
+          </span>
+          <button
+            aria-label="Ask FINN"
+            disabled={!query.trim() || status === "loading"}
+            onClick={submit}
+          >
+            {status === "loading" ? <Clock3 size={16} /> : <Send size={16} />}
+          </button>
+        </div>
+      </div>
+      {status !== "idle" && (
+        <div
+          className={`answer-card ${status === "error" ? "answer-error" : ""}`}
+        >
+          <div className="card-top">
+            <span className="tag blue">
+              {status === "loading" ? "RESEARCHING" : "FINN ANSWER"}
+            </span>
+            <span className="muted">
+              {status === "loading" ? "Working…" : provider}
+            </span>
+          </div>
+          {status === "loading" ? (
+            <>
+              <h3>Reading the relevant sources.</h3>
+              <p>
+                FINN is matching your question to company filings, reports,
+                transcripts and network context.
+              </p>
+            </>
+          ) : (
+            <>
+              <h3>Here’s the short version.</h3>
+              <div className="markdown-content">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {answer}
+                </ReactMarkdown>
+              </div>
+              <div className="source-row">
+                <span>
+                  <FileText size={14} /> Primary-source context
+                </span>
+                <span>
+                  <Link2 size={14} /> Network context
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </main>
+  );
+}
+function DraftShareDialog({ recipient, initialText, onClose }) {
+  const [text, setText] = useState(initialText);
+  const [message, setMessage] = useState("");
+  const shareWhatsApp = () =>
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(text)}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+  return (
+    <div className="share-backdrop">
+      <section
+        className="share-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Draft message to ${recipient}`}
+      >
+        <h2>Draft message</h2>
+        <p>
+          To {recipient}. Review and edit before sharing; FINN will not send it
+          for you.
+        </p>
+        <textarea
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+        />
+        <div className="share-actions">
+          <button
+            className="secondary"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(text);
+                setMessage("Copied to clipboard");
+              } catch {
+                setMessage("Clipboard is unavailable in this browser");
+              }
+            }}
+          >
+            Copy
+          </button>
+          <button
+            className="secondary"
+            onClick={async () => {
+              if (navigator.share) {
+                try {
+                  await navigator.share({
+                    title: `Message for ${recipient}`,
+                    text,
+                  });
+                } catch {}
+              } else shareWhatsApp();
+            }}
+          >
+            Share…
+          </button>
+          <button className="primary" onClick={shareWhatsApp}>
+            WhatsApp
+          </button>
+          <button className="text-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        {message && <p role="status">{message}</p>}
+      </section>
+    </div>
+  );
+}
+
+function ContactCallDialog({ onClose, contact, company, phoneContacts = [] }) {
+  const [phone, setPhone] = useState("");
+  const [message, setMessage] = useState("");
+  const [callNote, setCallNote] = useState(false);
+  const [note, setNote] = useState("");
+  const [saved, setSaved] = useState(false);
+  const phoneHref = phone.trim().replace(/[^+\d]/g, "");
+  const whatsappNumber = phone.trim().replace(/\D/g, "");
+  const chooseContact = async () => {
+    if (!navigator.contacts?.select) {
+      setMessage(
+        "Contact picking is not supported here. Choose a phone contact imported on Network, or enter a number below.",
+      );
+      return;
+    }
+    try {
+      const picked = await navigator.contacts.select(["name", "tel"], {
+        multiple: false,
+      });
+      const selected = picked?.[0];
+      const number = Array.isArray(selected?.tel)
+        ? selected.tel[0]
+        : selected?.tel;
+      if (number) {
+        setPhone(String(number));
+        setMessage("");
+      } else {
+        setMessage("That contact did not include a phone number.");
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError")
+        setMessage("Could not open contacts. You can enter the number below.");
+    }
+  };
+  const saveNote = () => {
+    try {
+      const prior = JSON.parse(localStorage.getItem("finn-call-log") || "[]");
+      prior.unshift({ contact, company, note, at: new Date().toISOString() });
+      localStorage.setItem(
+        "finn-call-log",
+        JSON.stringify(prior.slice(0, 100)),
+      );
+      setSaved(true);
+    } catch {
+      setMessage("Could not save a note in this browser.");
+    }
+  };
+  return (
+    <div className="share-backdrop">
+      <section
+        className="share-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Contact ${contact}`}
+      >
+        <div className="dialog-heading">
+          <div>
+            <span className="eyebrow">CONTACT {contact.toUpperCase()}</span>
+            <h2>Reach {contact}</h2>
+            <p>
+              About {company}. This illustrative demo profile has no phone
+              number attached. Choose or enter the real person’s number to open
+              your phone or WhatsApp.
+            </p>
+          </div>
+          <button className="text-button" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <button
+          className="secondary contact-picker-action"
+          onClick={chooseContact}
+        >
+          <Users size={15} /> Choose from phone contacts
+        </button>
+        {phoneContacts.some((person) => person.tel) && (
+          <label className="contact-phone-field">
+            Imported contacts
+            <select
+              aria-label="Choose an imported phone contact"
+              defaultValue=""
+              onChange={(event) => setPhone(event.target.value)}
+            >
+              <option value="">Choose a contact with a phone number</option>
+              {phoneContacts
+                .filter((person) => person.tel)
+                .map((person, index) => (
+                  <option
+                    key={`${person.name}-${person.tel}-${index}`}
+                    value={person.tel}
+                  >
+                    {person.name} · {person.tel}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
+        <label className="contact-phone-field">
+          Phone number
+          <input
+            aria-label="Phone number"
+            type="tel"
+            autoComplete="tel"
+            inputMode="tel"
+            placeholder="Include country code for WhatsApp (e.g. +91…)"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+          />
+        </label>
+        <div className="share-actions">
+          <a
+            className={`primary ${!phoneHref ? "disabled-link" : ""}`}
+            href={phoneHref ? `tel:${phoneHref}` : undefined}
+            aria-disabled={!phoneHref}
+          >
+            <PhoneCall size={15} /> Call
+          </a>
+          <a
+            className={`secondary ${!whatsappNumber ? "disabled-link" : ""}`}
+            href={
+              whatsappNumber
+                ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(`Hi ${contact}, I’m looking into ${company}. Could I ask for your perspective?`)}`
+                : undefined
+            }
+            target="_blank"
+            rel="noreferrer"
+            aria-disabled={!whatsappNumber}
+          >
+            WhatsApp chat
+          </a>
+        </div>
+        {message && (
+          <p role="status" className="contact-action-status">
+            {message}
+          </p>
+        )}
+        <button
+          className="text-button optional-note-toggle"
+          onClick={() => setCallNote(!callNote)}
+        >
+          {callNote ? "Hide call note" : "Add an optional call note"}
+        </button>
+        {callNote && (
+          <>
+            <textarea
+              aria-label="Optional call note"
+              placeholder="Add a short summary after your conversation"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+            />
+            {saved && <p role="status">Call note saved on this device.</p>}
+          </>
+        )}
+        <div className="share-actions">
+          {callNote && (
+            <button
+              className="secondary"
+              disabled={!note.trim()}
+              onClick={saveNote}
+            >
+              {saved ? "Saved" : "Save note"}
+            </button>
+          )}
+          <button className="text-button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const sampleCompanyExperts = {
+  TRENT: [
+    {
+      name: "Kavya Rao",
+      role: "Retail operations advisor",
+      detail:
+        "Former regional lead at a national apparel retailer · store rollout and productivity",
+    },
+    {
+      name: "Nikhil Desai",
+      role: "Consumer analyst",
+      detail:
+        "Tracks Indian fashion retail · inventory turns and same-store sales",
+    },
+    {
+      name: "Mira Shah",
+      role: "Retail supply-chain operator",
+      detail: "Experience across sourcing and multi-format distribution",
+    },
+  ],
+  TITAN: [
+    {
+      name: "Dev Malhotra",
+      role: "Jewellery retail operator",
+      detail:
+        "Former merchandising leader · gold working capital and store economics",
+    },
+    {
+      name: "Rhea Menon",
+      role: "Consumer analyst",
+      detail: "Tracks premiumisation, watches and jewellery demand",
+    },
+    {
+      name: "Arvind Iyer",
+      role: "Retail expansion advisor",
+      detail: "Experience with omnichannel and store network planning",
+    },
+  ],
+  DIXON: [
+    {
+      name: "Sanjay Batra",
+      role: "EMS operations advisor",
+      detail: "Former electronics manufacturing leader · utilisation and yield",
+    },
+    {
+      name: "Aditi Kulkarni",
+      role: "Semiconductor supply-chain analyst",
+      detail: "Tracks component sourcing and working-capital cycles",
+    },
+    {
+      name: "Rahul Khanna",
+      role: "Consumer electronics operator",
+      detail: "Experience across mobile and appliance contract manufacturing",
+    },
+  ],
+  UNOMINDA: [
+    {
+      name: "Neha Kapoor",
+      role: "Auto components operator",
+      detail: "Former program manager · customer nominations and ramp-up",
+    },
+    {
+      name: "Vivek Nair",
+      role: "Automotive analyst",
+      detail: "Tracks content per vehicle, capacity and capex returns",
+    },
+    {
+      name: "Kabir Sethi",
+      role: "Manufacturing advisor",
+      detail: "Experience with plant commissioning and supplier quality",
+    },
+  ],
+  RELIANCE: [
+    {
+      name: "Ishita Mehra",
+      role: "Energy and retail analyst",
+      detail: "Tracks conglomerate segment economics and capital allocation",
+    },
+    {
+      name: "Rohan Sood",
+      role: "Digital infrastructure advisor",
+      detail: "Experience across telecom, data centres and platform investment",
+    },
+    {
+      name: "Farah Khan",
+      role: "New-energy operator",
+      detail: "Tracks renewable capacity build-out and project funding",
+    },
+  ],
+};
+
+function getSampleCompanyExperts(ticker, company) {
+  return (
+    sampleCompanyExperts[ticker] || [
+      {
+        name: "Aarav Shah",
+        role: `${company} industry advisor`,
+        detail: "Illustrative operator profile · business model and execution",
+      },
+      {
+        name: "Ira Menon",
+        role: "Sector analyst",
+        detail:
+          "Illustrative profile · demand, competitors and market structure",
+      },
+      {
+        name: "Kabir Rao",
+        role: "Former supplier-side executive",
+        detail: "Illustrative profile · customers, supply chain and capacity",
+      },
+    ]
+  );
+}
+
+function WhoCanExplainDialog({ company, ticker, onClose, onDraft, onCall }) {
+  const experts = getSampleCompanyExperts(ticker, company);
+  return (
+    <div
+      className="share-backdrop"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section
+        className="share-dialog expert-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Who can explain ${company}`}
+      >
+        <div className="dialog-heading">
+          <div>
+            <span className="eyebrow">SAMPLE NETWORK CONTEXT</span>
+            <h2>Who can explain {company}?</h2>
+          </div>
+          <button className="text-button" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <p>
+          Illustrative demo profiles only. These are not verified people or real
+          connections.
+        </p>
+        <div className="expert-list">
+          {experts.map((expert) => (
+            <article className="expert-row" key={expert.name}>
+              <div className="person-avatar">
+                {expert.name
+                  .split(" ")
+                  .map((part) => part[0])
+                  .join("")}
+              </div>
+              <div>
+                <strong>{expert.name}</strong>
+                <span>{expert.role}</span>
+                <small>{expert.detail}</small>
+              </div>
+              <div className="expert-actions">
+                <button className="secondary" onClick={() => onDraft(expert)}>
+                  Draft message
+                </button>
+                <button className="text-button" onClick={() => onCall(expert)}>
+                  Call
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function normalizeCompanyKey(name = "") {
+  return name
+    .replace(/\s*\(\d+\)\s*$/, "")
+    .replace(
+      /\b(?:limited|ltd\.?|incorporated|inc\.?|corporation|corp\.?)\b/gi,
+      " ",
+    )
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function parseAnnouncementDate(timestamp) {
+  if (!timestamp) return null;
+  const indiaDate = String(timestamp).match(
+    /^(\d{1,2})[-/ ]([A-Za-z]{3}|\d{1,2})[-/ ](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
+  );
+  if (indiaDate) {
+    const month = /^[A-Za-z]/.test(indiaDate[2])
+      ? new Date(`${indiaDate[2]} 1, 2000`).getMonth()
+      : Number(indiaDate[2]) - 1;
+    const utc = Date.UTC(
+      Number(indiaDate[3]),
+      month,
+      Number(indiaDate[1]),
+      Number(indiaDate[4] || 0),
+      Number(indiaDate[5] || 0),
+      Number(indiaDate[6] || 0),
+    );
+    return new Date(utc - 330 * 60_000);
+  }
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? new Date(parsed) : null;
+}
+
+function localDateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
+  const [range, setRange] = useState("24H");
+  const [customStart, setCustomStart] = useState(() =>
+    localDateInputValue(new Date(Date.now() - 24 * 60 * 60 * 1000)),
+  );
+  const [customEnd, setCustomEnd] = useState(() =>
+    localDateInputValue(new Date()),
+  );
+  const [announcements, setAnnouncements] = useState([]);
+  const [announcementError, setAnnouncementError] = useState("");
+  const [announcementLoaded, setAnnouncementLoaded] = useState(false);
+  const [announcementRefreshing, setAnnouncementRefreshing] = useState(false);
+  const [announcementMeta, setAnnouncementMeta] = useState(null);
+  const [portfolioOnly, setPortfolioOnly] = useState(false);
+  const [expandedCompanies, setExpandedCompanies] = useState(false);
+  const [expandedCompany, setExpandedCompany] = useState(null);
+  const [contactCompany, setContactCompany] = useState(null);
+  const [draftContact, setDraftContact] = useState(null);
+  const [callContact, setCallContact] = useState(null);
+  const selectedDates = (() => {
+    if (range === "CUSTOM") return { from: customStart, to: customEnd };
+    const days = range === "24H" ? 1 : range === "48H" ? 2 : 7;
+    const to = new Date();
+    const from = new Date(to);
+    from.setDate(from.getDate() - days);
+    return { from: localDateInputValue(from), to: localDateInputValue(to) };
+  })();
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      if (active) setAnnouncementRefreshing(true);
+      try {
+        const query = new URLSearchParams({
+          from: selectedDates.from,
+          to: selectedDates.to,
+          includeUnclassified: "true",
+        });
+        const response = await fetch(`/api/announcements?${query}`);
+        const payload = await response.json();
+        if (!response.ok)
+          throw new Error(
+            [payload.error, payload.detail].filter(Boolean).join(": ") ||
+              "Exchange feed unavailable",
+          );
+        if (!active) return;
+        setAnnouncements(payload.data || []);
+        setAnnouncementMeta(payload);
+        setAnnouncementError("");
+      } catch (error) {
+        if (active) setAnnouncementError(error.message);
+      } finally {
+        if (active) {
+          setAnnouncementLoaded(true);
+          setAnnouncementRefreshing(false);
+        }
+      }
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [selectedDates.from, selectedDates.to]);
+  const refreshAnnouncements = async () => {
+    setAnnouncementRefreshing(true);
+    try {
+      const query = new URLSearchParams({
+        from: selectedDates.from,
+        to: selectedDates.to,
+        includeUnclassified: "true",
+        refresh: "true",
+      });
+      const response = await fetch(`/api/announcements?${query}`);
+      const payload = await response.json();
+      if (!response.ok)
+        throw new Error(
+          [payload.error, payload.detail].filter(Boolean).join(": ") ||
+            "Exchange feed unavailable",
+        );
+      setAnnouncements(payload.data || []);
+      setAnnouncementMeta(payload);
+      setAnnouncementError("");
+    } catch (error) {
+      setAnnouncementError(error.message);
+    } finally {
+      setAnnouncementLoaded(true);
+      setAnnouncementRefreshing(false);
+    }
+  };
+  const cutoffHours = range === "24H" ? 24 : range === "48H" ? 48 : 168;
+  const isInSelectedRange = (timestamp) => {
+    const date = parseAnnouncementDate(timestamp);
+    if (!date) return false;
+    if (range === "CUSTOM") {
+      if (customStart > customEnd) return false;
+      return (
+        date >= new Date(`${customStart}T00:00:00`) &&
+        date <= new Date(`${customEnd}T23:59:59`)
+      );
+    }
+    const ageMs = Date.now() - date.getTime();
+    return ageMs >= 0 && ageMs <= cutoffHours * 3600000;
+  };
+  const savedHoldings = loadPortfolioHoldings();
+  const portfolioKeys = new Set(
+    savedHoldings.map((holding) =>
+      normalizeCompanyKey(
+        portfolioCompanyMetadata[canonicalTicker(holding.symbol)]?.name ||
+          holding.name,
+      ),
+    ),
+  );
+  const portfolioTickers = new Set(
+    savedHoldings.map((holding) => canonicalTicker(holding.symbol)),
+  );
+  const visibleLiveAnnouncements = announcements
+    .filter((item) => isInSelectedRange(item.filedAt))
+    .filter(
+      (item) =>
+        !portfolioOnly ||
+        portfolioKeys.has(
+          item.companyKey || normalizeCompanyKey(item.company),
+        ) ||
+        portfolioTickers.has((item.ticker || "").toUpperCase()),
+    );
+  const companyGroups = [];
+  const groupsByKey = new Map();
+  for (const item of visibleLiveAnnouncements) {
+    const key = item.companyKey || normalizeCompanyKey(item.company);
+    if (!groupsByKey.has(key)) {
+      const group = {
+        key,
+        name: item.company,
+        ticker: "",
+        filings: [],
+        sources: new Set(),
+        latestAt: 0,
+      };
+      groupsByKey.set(key, group);
+      companyGroups.push(group);
+    }
+    const group = groupsByKey.get(key);
+    if (item.company.length > group.name.length) group.name = item.company;
+    if (item.ticker && !/^\d+$/.test(item.ticker)) group.ticker = item.ticker;
+    group.sources.add(item.source);
+    const filedAt = parseAnnouncementDate(item.filedAt)?.getTime() || 0;
+    group.latestAt = Math.max(group.latestAt, filedAt);
+    const cleanHeadline = (item.headline || "")
+      .replace(/\s*\|\s*SUBJECT:.*$/i, "")
+      .replace(/^[A-Z][A-Z0-9&.-]{1,19}:\s*/, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+    const filingKey = `${item.category}:${cleanHeadline}`;
+    let filing = group.filings.find((candidate) => candidate.key === filingKey);
+    const stopwords = new Set([
+      "company",
+      "limited",
+      "exchange",
+      "informed",
+      "submitted",
+      "please",
+      "refer",
+      "enclosed",
+      "herewith",
+      "attachment",
+      "board",
+      "meeting",
+      "held",
+      "under",
+      "regulation",
+      "sebi",
+      "quarter",
+      "period",
+      "year",
+      "about",
+      "regarding",
+      "that",
+      "this",
+      "with",
+      "from",
+      "has",
+      "have",
+      "for",
+      "the",
+      "and",
+      "its",
+      "was",
+      "are",
+      "to",
+    ]);
+    const tokens = new Set(
+      cleanHeadline
+        .split(" ")
+        .filter((token) => token.length > 3 && !stopwords.has(token)),
+    );
+    const tokenSimilarity = (left, right) => {
+      const union = new Set([...left, ...right]);
+      return union.size
+        ? [...left].filter((token) => right.has(token)).length / union.size
+        : 0;
+    };
+    if (!filing && item.category !== "unclassified") {
+      filing = group.filings.find(
+        (candidate) =>
+          candidate.category === item.category &&
+          Math.abs(candidate.time - filedAt) <= 6 * 60 * 60 * 1000 &&
+          candidate.sourceNames.some((source) => source !== item.source) &&
+          tokenSimilarity(candidate.tokens, tokens) >= 0.22,
+      );
+    }
+    if (!filing) {
+      filing = {
+        key: filingKey,
+        category: item.category,
+        headline: item.headline.replace(/\s*\|\s*SUBJECT:.*$/i, ""),
+        filedAt: item.filedAt,
+        time: filedAt,
+        links: [],
+        sourceNames: [],
+        tokens,
+      };
+      group.filings.push(filing);
+    }
+    if (item.headline.length > filing.headline.length)
+      filing.headline = item.headline.replace(/\s*\|\s*SUBJECT:.*$/i, "");
+    if (!filing.sourceNames.includes(item.source))
+      filing.sourceNames.push(item.source);
+    if (
+      item.sourceUrl &&
+      !filing.links.some((link) => link.url === item.sourceUrl)
+    ) {
+      filing.links.push({ source: item.source, url: item.sourceUrl });
+    }
+    if (filedAt > filing.time) {
+      filing.time = filedAt;
+      filing.filedAt = item.filedAt;
+    }
+  }
+  companyGroups.sort((a, b) => b.latestAt - a.latestAt);
+  for (const group of companyGroups)
+    group.filings.sort((a, b) => b.time - a.time);
+  return (
+    <main className="content figma-screen push-detail">
+      <div className="figma-notice">LIVE EXCHANGE FILINGS · NSE + BSE</div>
+      <div className="figma-horizon">
+        {[
+          ["24H", "24H"],
+          ["48H", "48H"],
+          ["7D", "7D"],
+          ["CUSTOM", "CUSTOM⌄"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            className={range === value ? "selected" : ""}
+            onClick={() => setRange(value)}
+            aria-pressed={range === value}
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          className={portfolioOnly ? "selected" : ""}
+          onClick={() => setPortfolioOnly(!portfolioOnly)}
+          aria-pressed={portfolioOnly}
+        >
+          Portfolio only
+        </button>
+        <span className="alert-pill">
+          <CircleDot size={10} /> {companyGroups.length} COMPANIES
+        </span>
+      </div>
+      {range === "CUSTOM" && (
+        <div className="custom-date-filter">
+          <label>
+            From{" "}
+            <input
+              type="date"
+              value={customStart}
+              onChange={(event) => setCustomStart(event.target.value)}
+            />
+          </label>
+          <label>
+            To{" "}
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(event) => setCustomEnd(event.target.value)}
+            />
+          </label>
+        </div>
+      )}
+      <section className="live-announcements">
+        <div className="section-title">
+          <span>Exchange announcements</span>
+          <span className="muted">
+            {announcementMeta?.source?.join(" + ") || "Exchange feeds"} ·{" "}
+            {selectedDates.from} to {selectedDates.to}
+          </span>
+          <button
+            className="feed-refresh"
+            type="button"
+            onClick={refreshAnnouncements}
+            disabled={announcementRefreshing}
+            aria-label="Refresh exchange announcements"
+            title="Refresh exchange announcements"
+          >
+            <RefreshCw
+              size={15}
+              className={announcementRefreshing ? "spin" : ""}
+            />
+          </button>
+        </div>
+        {announcementError ? (
+          <p className="muted">
+            Live feed unavailable: {announcementError}. Refresh to try the
+            exchange feeds again.
+          </p>
+        ) : visibleLiveAnnouncements.length ? (
+          <>
+            <p className="feed-summary">
+              {visibleLiveAnnouncements.length} filings across{" "}
+              {companyGroups.length} companies in the selected time range
+              {announcementMeta?.fetchedAt && (
+                <>
+                  {" "}
+                  · refreshed{" "}
+                  {new Date(announcementMeta.fetchedAt).toLocaleTimeString()}
+                </>
+              )}
+            </p>
+            {companyGroups
+              .slice(0, expandedCompanies ? undefined : 5)
+              .map((group) => (
+                <article className="live-company" key={group.key}>
+                  <div className="live-company-heading">
+                    <div>
+                      <strong>{group.name}</strong>
+                      <small>
+                        {group.filings.length} filing
+                        {group.filings.length === 1 ? "" : "s"} ·{" "}
+                        {[...group.sources].join(" + ")}
+                      </small>
+                    </div>
+                    <button
+                      className="text-button"
+                      onClick={() => setContactCompany(group)}
+                    >
+                      Who to ask
+                    </button>
+                  </div>
+                  {group.filings
+                    .slice(0, expandedCompany === group.key ? undefined : 3)
+                    .map((filing) => (
+                      <div className="live-filing" key={filing.key}>
+                        <span
+                          className={`event-tag ${filing.category === "unclassified" ? "neutral" : "green"}`}
+                        >
+                          {filing.category.replaceAll("_", " ")}
+                        </span>
+                        <div className="live-filing-copy">
+                          <p title={filing.headline}>{filing.headline}</p>
+                          <small>{filing.filedAt || "Date not supplied"}</small>
+                        </div>
+                        <div className="filing-links">
+                          {filing.links.map((link) => (
+                            <a
+                              key={`${link.source}-${link.url}`}
+                              href={link.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label={`Open ${link.source} filing`}
+                              title={`Open ${link.source} filing`}
+                            >
+                              {link.source.startsWith("BSE") ? "BSE" : "NSE"}{" "}
+                              <ExternalLink size={11} />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  {group.filings.length > 3 && (
+                    <button
+                      className="text-button more-filings"
+                      onClick={() =>
+                        setExpandedCompany(
+                          expandedCompany === group.key ? null : group.key,
+                        )
+                      }
+                    >
+                      {expandedCompany === group.key
+                        ? "Show fewer filings"
+                        : `Show all ${group.filings.length} filings`}
+                    </button>
+                  )}
+                </article>
+              ))}
+            {companyGroups.length > 5 && (
+              <button
+                className="text-button"
+                onClick={() => setExpandedCompanies(!expandedCompanies)}
+              >
+                {expandedCompanies
+                  ? "Show fewer companies"
+                  : `Show all ${companyGroups.length} companies`}
+              </button>
+            )}
+            {announcementMeta?.providerWarnings?.length > 0 && (
+              <p className="feed-warning">
+                An exchange provider is unavailable:{" "}
+                {announcementMeta.providerWarnings.join("; ")}
+              </p>
+            )}
+            {announcementMeta?.providers?.BSE?.partial && (
+              <p className="feed-warning">
+                BSE returned the newest {announcementMeta.providers.BSE.count}{" "}
+                of {announcementMeta.providers.BSE.total} filings in this range.
+                Narrow the dates to see a more complete result set.
+              </p>
+            )}
+          </>
+        ) : announcementLoaded ? (
+          <div className="feed-empty-state">
+            <p>
+              {portfolioOnly
+                ? "No filings for your holdings were returned in the selected date range."
+                : "No exchange announcements were returned for this time range."}
+            </p>
+            <p className="muted">
+              Dated exchange data is available for recent filing history. RSS
+              fallback data, when used, is only a latest-items snapshot.
+            </p>
+            {announcementMeta?.providerWarnings?.length > 0 && (
+              <p className="feed-warning">
+                Dated provider status:{" "}
+                {announcementMeta.providerWarnings.join("; ")}
+              </p>
+            )}
+            {announcementMeta?.providers?.BSE?.partial && (
+              <p className="feed-warning">
+                BSE returned {announcementMeta.providers.BSE.count} of{" "}
+                {announcementMeta.providers.BSE.total} filings before its page
+                limit. Narrow the dates to check a smaller result set.
+              </p>
+            )}
+            <div className="share-actions">
+              {portfolioOnly && (
+                <button
+                  className="secondary"
+                  onClick={() => setPortfolioOnly(false)}
+                >
+                  Show all companies
+                </button>
+              )}
+              <button
+                className="text-button"
+                onClick={() => setActive("portfolio")}
+              >
+                Review portfolio
+              </button>
+            </div>
+            {portfolioOnly && (
+              <div className="portfolio-feed-empty-list">
+                <h3>Your portfolio companies</h3>
+                <p>No matching filing in the current exchange RSS snapshot.</p>
+                {savedHoldings.map((holding) => {
+                  const ticker = holding.symbol.replace(/\.(NS|BO)$/i, "");
+                  return (
+                    <div
+                      className="portfolio-feed-empty-row"
+                      key={holding.symbol}
+                    >
+                      <div>
+                        <strong>{holding.name}</strong>
+                        <small>{holding.symbol}</small>
+                      </div>
+                      <span>No latest filing</span>
+                      <button
+                        className="text-button"
+                        onClick={() => {
+                          setSelectedTicker(ticker);
+                          setActive("pull");
+                        }}
+                      >
+                        Research
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="muted">Loading NSE RSS and BSE announcements…</p>
+        )}
+      </section>
+      {contactCompany && (
+        <WhoCanExplainDialog
+          company={contactCompany.name}
+          ticker={contactCompany.ticker}
+          onClose={() => setContactCompany(null)}
+          onDraft={(expert) => {
+            setDraftContact({ expert, company: contactCompany.name });
+            setContactCompany(null);
+          }}
+          onCall={(expert) => {
+            setCallContact({ expert, company: contactCompany.name });
+            setContactCompany(null);
+          }}
+        />
+      )}
+      {draftContact && (
+        <DraftShareDialog
+          key={`${draftContact.company}-${draftContact.expert.name}`}
+          recipient={draftContact.expert.name}
+          initialText={`Hi ${draftContact.expert.name}, I’m researching ${draftContact.company}. Could I ask you a few questions about your experience in this area?`}
+          onClose={() => setDraftContact(null)}
+        />
+      )}
+      {callContact && (
+        <ContactCallDialog
+          contact={callContact.expert.name}
+          company={callContact.company}
+          phoneContacts={phoneContacts}
+          onClose={() => setCallContact(null)}
+        />
+      )}
+    </main>
+  );
+}
+
+function DetailedPull({
+  setActive,
+  selectedTicker,
+  setSelectedTicker,
+  phoneContacts,
+}) {
+  const [ticker, setTicker] = useState(selectedTicker || "TRENT");
+  const [lookupTicker, setLookupTicker] = useState(selectedTicker || "TRENT");
+  const [contactDialogOpen, setContactDialogOpen] = useState(false);
+  const [draftContact, setDraftContact] = useState(null);
+  const [callContact, setCallContact] = useState(null);
+  const [liveFundamentals, setLiveFundamentals] = useState(null);
+  const [fundamentalsError, setFundamentalsError] = useState("");
+  const [fundamentalsLoading, setFundamentalsLoading] = useState(false);
+  const portfolioHoldings = loadPortfolioHoldings();
+  useEffect(() => {
+    const nextTicker = canonicalTicker(selectedTicker || "TRENT");
+    if (nextTicker !== ticker) {
+      setTicker(nextTicker);
+      setLookupTicker(nextTicker);
+    }
+  }, [selectedTicker]);
+  useEffect(() => {
+    let cancelled = false;
+    setFundamentalsLoading(true);
+    setFundamentalsError("");
+    setLiveFundamentals(null);
+    fetch(`/api/fundamentals?ticker=${encodeURIComponent(lookupTicker)}`)
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok)
+          throw new Error(
+            [payload.error, payload.detail].filter(Boolean).join(": ") ||
+              "Source unavailable",
+          );
+        if (!cancelled) setLiveFundamentals(payload);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLiveFundamentals(null);
+          setFundamentalsError(error.message);
+        }
+      })
+      .finally(() => !cancelled && setFundamentalsLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [lookupTicker]);
+  const companyMeta = portfolioCompanyMetadata[canonicalTicker(ticker)];
+  const detail = companyDetails[canonicalTicker(ticker)] || {
+    name: companyMeta?.name || `${canonicalTicker(ticker)} Ltd`,
+    sector: companyMeta?.sector || "Company lookup",
+    exchange: `NSE · ${ticker}`,
+    snapshot:
+      "Company facts are not loaded for this ticker yet. Open the linked source to review its published financials.",
+    trajectory: "Not available in this preview.",
+    cash: "Not available in this preview.",
+    guidance: "Not available in this preview.",
+    metrics: [],
+    sources: [],
+  };
+  const screenerTicker = /^[A-Z0-9.-]{1,20}$/.test(canonicalTicker(ticker))
+    ? canonicalTicker(ticker)
+    : "";
+  const displayName = liveFundamentals?.name || detail.name;
+  const experts = getSampleCompanyExperts(ticker, displayName);
+  const selectResearchTicker = (value) => {
+    const nextTicker = canonicalTicker(value.trim());
+    setTicker(nextTicker);
+    setLookupTicker(nextTicker);
+    setSelectedTicker(nextTicker);
+  };
+  return (
+    <main className="content figma-screen pull-detail">
+      <div className="figma-notice">SAMPLE DATA · CONNECTED PREVIEW</div>
+      <div className="pull-actions">
+        <button className="primary" onClick={() => setActive("ask")}>
+          <Sparkles size={15} /> Ask FINN
+        </button>
+        <button
+          className="secondary"
+          onClick={() => {
+            setSelectedTicker(ticker.trim().toUpperCase());
+            setActive("ask");
+          }}
+        >
+          Research with AI <ArrowUpRight size={15} />
+        </button>
+      </div>
+      <div className="research-search">
+        <Search size={16} />
+        <input
+          value={ticker}
+          onChange={(event) => setTicker(event.target.value.toUpperCase())}
+          onKeyDown={(event) =>
+            event.key === "Enter" &&
+            selectResearchTicker(event.currentTarget.value)
+          }
+        />
+        <button
+          aria-label="Search company"
+          onClick={() => selectResearchTicker(ticker)}
+        >
+          <Search size={16} />
+        </button>
+      </div>
+      <section
+        className="pull-portfolio-shortcuts"
+        aria-label="Portfolio companies"
+      >
+        <div>
+          <strong>From your portfolio</strong>
+          <span>Select a holding to research</span>
+        </div>
+        <div className="pull-portfolio-chips">
+          {portfolioHoldings.map((holding) => {
+            const holdingTicker = canonicalTicker(holding.symbol);
+            return (
+              <button
+                key={holding.symbol}
+                className={
+                  canonicalTicker(ticker) === holdingTicker ? "selected" : ""
+                }
+                onClick={() => selectResearchTicker(holdingTicker)}
+                title={`Research ${holding.name}`}
+              >
+                {holding.name} <span>{holdingTicker}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+      <div className="forensic-chips">
+        <span>FORENSICS</span>
+        <button
+          onClick={() => {
+            setTicker("DIXON");
+            setLookupTicker("DIXON");
+          }}
+        >
+          <CircleDot size={9} /> Dixon Q2 guidance
+        </button>
+        <button
+          onClick={() => {
+            setTicker("UNOMINDA");
+            setLookupTicker("UNOMINDA");
+          }}
+        >
+          <CircleDot size={9} /> Tata Motors capex
+        </button>
+        <button
+          onClick={() => {
+            setTicker("TITAN");
+            setLookupTicker("TITAN");
+          }}
+        >
+          <CircleDot size={9} /> Titan gross margin
+        </button>
+      </div>
+      <section className="pull-company-card">
+        <div className="company-title">
+          <div className="ticker-badge blue-badge">{ticker.slice(0, 2)}</div>
+          <div>
+            <h2>{displayName}</h2>
+            <span>
+              {detail.sector} · {detail.exchange}
+            </span>
+          </div>
+          <strong>
+            {liveFundamentals?.currentPrice || "—"}
+            <small className="muted"> Screener snapshot</small>
+          </strong>
+        </div>
+        <div className="metric-row four-col">
+          {detail.metrics.map(([label, value, change]) => (
+            <div key={label}>
+              <small>{label}</small>
+              <strong>{value}</strong>
+              <span>{change}</span>
+            </div>
+          ))}
+          <div>
+            <small>MKT CAP</small>
+            <strong>{liveFundamentals?.marketCap || "—"}</strong>
+            <span>Source snapshot</span>
+          </div>
+          <div>
+            <small>P/E LTM</small>
+            <strong>{liveFundamentals?.stockPE || "—"}</strong>
+            <span>Source snapshot</span>
+          </div>
+          <div>
+            <small>SSSG (Q3)</small>
+            <strong className="green-text">
+              {ticker === "TRENT" ? "+19.4%" : "—"}
+            </strong>
+            <span>
+              {ticker === "TRENT"
+                ? "Fashion retail · preview figure"
+                : "Not supplied"}
+            </span>
+          </div>
+        </div>
+      </section>
+      <section className="network-research-card">
+        <div>
+          <h3>Who can explain {displayName}?</h3>
+          <p>
+            Three illustrative company and industry profiles for a demo outreach
+            workflow.
+          </p>
+        </div>
+        <span className="tier-pill">SAMPLE PROFILES</span>
+        <div className="contact-strip">
+          <div className="avatar-stack">
+            {experts.map((expert) => (
+              <span key={expert.name}>
+                {expert.name
+                  .split(" ")
+                  .map((part) => part[0])
+                  .join("")}
+              </span>
+            ))}
+          </div>
+          <div>
+            <strong>{experts[0].name} and two others</strong>
+            <span>{experts[0].role}</span>
+          </div>
+          <button
+            className="primary"
+            onClick={() => setContactDialogOpen(true)}
+          >
+            Who to ask <ChevronRight size={13} />
+          </button>
+        </div>
+      </section>
+      <section className="research-sections">
+        <div className="section-title">
+          <span>Business snapshot</span>
+          <span className="muted">Primary sources</span>
+        </div>
+        <p>{detail.snapshot}</p>
+        <div className="research-grid detailed-grid">
+          <div>
+            <span>Trajectory</span>
+            <strong>{detail.trajectory}</strong>
+          </div>
+          <div>
+            <span>Cash quality</span>
+            <strong>{detail.cash}</strong>
+          </div>
+          <div>
+            <span>Guidance</span>
+            <strong>{detail.guidance}</strong>
+          </div>
+          <div>
+            <span>Sources</span>
+            <strong>
+              {detail.sources.length
+                ? detail.sources.join(" · ")
+                : "No imported source files"}
+            </strong>
+            {screenerTicker && (
+              <a
+                href={`https://www.screener.in/company/${encodeURIComponent(screenerTicker)}/consolidated/`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open {ticker} on Screener.in <ExternalLink size={13} />
+              </a>
+            )}
+          </div>
+        </div>
+        <div className="fundamentals-source-state">
+          {fundamentalsLoading || (!liveFundamentals && !fundamentalsError) ? (
+            <p>Loading Screener company tables…</p>
+          ) : fundamentalsError ? (
+            <p>Live fundamentals unavailable: {fundamentalsError}</p>
+          ) : (
+            <p>
+              Source data retrieved{" "}
+              {new Date(liveFundamentals.fetchedAt).toLocaleString()} · cached
+              for 15 minutes.
+            </p>
+          )}
+          {liveFundamentals?.tables?.profitLoss?.length > 0 && (
+            <div className="fundamentals-table-wrap">
+              <h3>Profit &amp; Loss · Source table</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Line item</th>
+                    {(liveFundamentals.tables.profitLoss[0]?.values || []).map(
+                      (_, index) => (
+                        <th key={index}>Period {index + 1}</th>
+                      ),
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {liveFundamentals.tables.profitLoss.slice(0, 8).map((row) => (
+                    <tr key={row.label}>
+                      <td>{row.label}</td>
+                      {row.values.map((value, index) => (
+                        <td key={index}>{value}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+      {contactDialogOpen && (
+        <WhoCanExplainDialog
+          company={displayName}
+          ticker={ticker}
+          onClose={() => setContactDialogOpen(false)}
+          onDraft={(expert) => {
+            setDraftContact({ expert, company: displayName });
+            setContactDialogOpen(false);
+          }}
+          onCall={(expert) => {
+            setCallContact({ expert, company: displayName });
+            setContactDialogOpen(false);
+          }}
+        />
+      )}
+      {draftContact && (
+        <DraftShareDialog
+          key={`${draftContact.company}-${draftContact.expert.name}`}
+          recipient={draftContact.expert.name}
+          initialText={`Hi ${draftContact.expert.name}, I’m researching ${draftContact.company}. Could I ask you a few questions about your experience in this area?`}
+          onClose={() => setDraftContact(null)}
+        />
+      )}
+      {callContact && (
+        <ContactCallDialog
+          contact={callContact.expert.name}
+          company={callContact.company}
+          phoneContacts={phoneContacts}
+          onClose={() => setCallContact(null)}
+        />
+      )}
+    </main>
+  );
+}
+
+function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
+  const [notice, setNotice] = useState("");
+  const [phoneContactStatus, setPhoneContactStatus] = useState("");
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [draftText, setDraftText] = useState(
+    "Hi Ananya, I saw the latest update on the specialty fluoro-polymer capex cycle and thought of our earlier conversation. Would you have time for a quick catch-up this week?",
+  );
+  const contactPickerAvailable =
+    typeof navigator !== "undefined" &&
+    "contacts" in navigator &&
+    "ContactsManager" in window;
+  const choosePhoneContacts = async () => {
+    if (!contactPickerAvailable) return;
+    try {
+      const available = await navigator.contacts.getProperties();
+      const fields = ["name", "email", "tel"].filter((field) =>
+        available.includes(field),
+      );
+      const selected = await navigator.contacts.select(fields, {
+        multiple: true,
+      });
+      const imported = selected.map((person) => ({
+        name: person.name?.[0] || "Unnamed contact",
+        email: person.email?.[0] || "",
+        tel: person.tel?.[0] || "",
+      }));
+      setPhoneContacts((current) => [
+        ...new Map(
+          [...current, ...imported].map((person) => [
+            `${person.name}-${person.tel}-${person.email}`,
+            person,
+          ]),
+        ).values(),
+      ]);
+      setPhoneContactStatus(
+        `${imported.length} selected contact${imported.length === 1 ? "" : "s"} added for this session.`,
+      );
+    } catch (error) {
+      setPhoneContactStatus(
+        error.name === "AbortError"
+          ? "Contact selection cancelled."
+          : "Contact picker is unavailable. Try importing a .vcf contact file.",
+      );
+    }
+  };
+  const importVCard = async (event) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const records = text.match(/BEGIN:VCARD[\s\S]*?END:VCARD/gi) || [];
+    const imported = records
+      .map((record) => {
+        const field = (key) =>
+          record
+            .match(
+              new RegExp(
+                `(?:^|\\n)(?:item\\d+\\.)?${key}(?:;[^:]*)?:(.*)`,
+                "im",
+              ),
+            )?.[1]
+            ?.trim()
+            .replace(/\\[nN]/g, " ")
+            .replace(/\\,/g, ",") || "";
+        const structuredName = field("N")
+          .split(";")
+          .filter(Boolean)
+          .reverse()
+          .join(" ");
+        return {
+          name: field("FN") || structuredName || "Unnamed contact",
+          email: field("EMAIL"),
+          tel: field("TEL"),
+        };
+      })
+      .filter(
+        (person) =>
+          person.name !== "Unnamed contact" || person.email || person.tel,
+      );
+    setPhoneContacts((current) => [
+      ...new Map(
+        [...current, ...imported].map((person) => [
+          `${person.name}-${person.tel}-${person.email}`,
+          person,
+        ]),
+      ).values(),
+    ]);
+    setPhoneContactStatus(
+      `${imported.length} contact${imported.length === 1 ? "" : "s"} imported locally from ${file.name}.`,
+    );
+    input.value = "";
+  };
+  return (
+    <main className="content figma-screen network-detail">
+      <div className="figma-notice">SAMPLE DATA · CONNECTED PREVIEW</div>
+      <SectionKicker>INTELLIGENCE FABRIC</SectionKicker>
+      <div className="network-title-row">
+        <div>
+          <h1>
+            Network
+            <br />
+            <em>Layer</em>
+          </h1>
+        </div>
+      </div>
+      <section className="phone-contact-card">
+        <div>
+          <strong>Bring in your contacts</strong>
+          <p>
+            Choose individual contacts from a supported Android browser, or
+            import a .vcf file. Contacts stay in this page session.
+          </p>
+        </div>
+        <div className="phone-contact-actions">
+          <button
+            className="secondary"
+            onClick={choosePhoneContacts}
+            disabled={!contactPickerAvailable}
+          >
+            Choose from phone
+          </button>
+          <label className="secondary vcard-picker">
+            Import .vcf
+            <input
+              type="file"
+              accept=".vcf,text/vcard"
+              onChange={importVCard}
+            />
+          </label>
+        </div>
+        {!contactPickerAvailable && (
+          <small className="muted">
+            Direct contact picking is not supported in this browser. The .vcf
+            option works across iOS and Android.
+          </small>
+        )}
+        {phoneContactStatus && <p role="status">{phoneContactStatus}</p>}
+        {phoneContacts.length > 0 && (
+          <ul className="phone-contact-list">
+            {phoneContacts.map((person, index) => (
+              <li key={`${person.name}-${person.tel}-${index}`}>
+                <strong>{person.name}</strong>
+                <span>
+                  {[person.email, person.tel].filter(Boolean).join(" · ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <div className="network-stats">
+        <div>
+          <strong>412</strong>
+          <span>Active Ties</span>
+        </div>
+        <div>
+          <strong>64</strong>
+          <span>Portfolio Overlaps</span>
+        </div>
+        <div>
+          <strong>18</strong>
+          <span>Warm Triggers</span>
+        </div>
+      </div>
+      <div className="network-section-head">
+        <h2>
+          <CircleDot size={10} className="green-icon" /> Keeping The Network
+          Warm
+        </h2>
+        <span>1 Actionable</span>
+      </div>
+      <section className="warm-card">
+        <div className="warm-card-top">
+          <div className="avatar-stack">
+            <span>AS</span>
+            <span>VS</span>
+          </div>
+          <div>
+            <strong>Ananya Sen</strong>
+            <span>VP Strategy · Aditya Birla Group</span>
+          </div>
+          <b>◌ 7m silent</b>
+        </div>
+        <div className="warm-signal">
+          <strong>↗ Q3 EBITDA +24% Beat</strong>
+          <span>SEC Filing 14h ago</span>
+          <p>
+            <b>FINN Prompt:</b> Last spoke 214 days ago. Natural reason to
+            reconnect on specialty fluoro-polymer capex cycle.
+          </p>
+        </div>
+        <div className="warm-card-footer">
+          <em>Draft aligned with 2024 syndicate memo</em>
+          <button className="primary" onClick={() => setDraftOpen(true)}>
+            ☷ Draft Note
+          </button>
+        </div>
+      </section>
+      {draftOpen && (
+        <div className="share-backdrop" role="presentation">
+          <section
+            className="share-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="draft-title"
+          >
+            <h2 id="draft-title">Draft message to Ananya</h2>
+            <p>
+              Review and edit before sharing. FINN does not send it for you.
+            </p>
+            <textarea
+              value={draftText}
+              onChange={(event) => setDraftText(event.target.value)}
+            />
+            <div className="share-actions">
+              <button
+                className="secondary"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(draftText);
+                    setNotice("Draft copied to clipboard");
+                  } catch {
+                    setNotice("Clipboard access unavailable");
+                  }
+                }}
+              >
+                Copy text
+              </button>
+              <button
+                className="secondary"
+                onClick={async () => {
+                  if (navigator.share) {
+                    try {
+                      await navigator.share({ text: draftText });
+                    } catch {}
+                  } else {
+                    window.open(
+                      `https://wa.me/?text=${encodeURIComponent(draftText)}`,
+                      "_blank",
+                      "noopener,noreferrer",
+                    );
+                  }
+                }}
+              >
+                Share…
+              </button>
+              <button
+                className="primary"
+                onClick={() =>
+                  window.open(
+                    `https://wa.me/?text=${encodeURIComponent(draftText)}`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+              >
+                WhatsApp
+              </button>
+              <button
+                className="text-button"
+                onClick={() => setDraftOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      <div className="network-section-head">
+        <h2>⌘ Second-Degree Diligence</h2>
+        <span>Live Pathing</span>
+      </div>
+      <section className="diligence-card">
+        <div className="diligence-row">
+          <div className="mini-avatar">MK</div>
+          <div>
+            <strong>Maya Krishnan</strong>
+            <span>2nd degree · Priya knows her · CFO, Northstar Capital</span>
+          </div>
+          <button onClick={() => setActive("profile")}>
+            <ChevronRight size={15} />
+          </button>
+        </div>
+        <p>
+          Relevant overlap with Dixon's finance leadership and electronics
+          operating network.
+        </p>
+      </section>
+      {notice && <div className="toast">{notice}</div>}
+    </main>
+  );
+}
+
+const defaultPortfolioHoldings = [
+  {
+    name: "Trent Limited",
+    symbol: "TRENT.NS",
+    samplePrice: 6890,
+    sector: "Retail Hypergrowth",
+  },
+  {
+    name: "Titan Company",
+    symbol: "TITAN.NS",
+    samplePrice: 3912.4,
+    sector: "Consumer Discretionary",
+  },
+  {
+    name: "Dixon Technologies",
+    symbol: "DIXON.NS",
+    samplePrice: 11842.1,
+    sector: "Electronics Manufacturing",
+  },
+  {
+    name: "Uno Minda",
+    symbol: "UNOMINDA.NS",
+    samplePrice: 1128.65,
+    sector: "Auto Components",
+  },
+  {
+    name: "Reliance Industries",
+    symbol: "RELIANCE.NS",
+    samplePrice: 2946.3,
+    sector: "Diversified",
+  },
+];
+
+function loadPortfolioHoldings() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem("finn-portfolio-holdings") || "null",
+    );
+    if (Array.isArray(saved) && saved.length)
+      return saved.map((holding) => {
+        const currentSymbol = String(holding.symbol || "").toUpperCase();
+        const exchange = currentSymbol.endsWith(".BO") ? ".BO" : ".NS";
+        const ticker = canonicalTicker(currentSymbol);
+        const metadata = portfolioCompanyMetadata[ticker];
+        return {
+          ...holding,
+          name: metadata?.name || holding.name,
+          symbol: `${ticker}${exchange}`,
+          sector: metadata?.sector || holding.sector,
+        };
+      });
+  } catch {}
+  return defaultPortfolioHoldings;
+}
+
+function DetailedPortfolio({ setActive, setSelectedTicker }) {
+  const [holdings, setHoldings] = useState(loadPortfolioHoldings);
+  const [newTicker, setNewTicker] = useState("");
+  const [addHoldingError, setAddHoldingError] = useState("");
+  const [page, setPage] = useState(1);
+  const [quotes, setQuotes] = useState({});
+  const [refreshing, setRefreshing] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState("");
+  const [marketError, setMarketError] = useState("");
+  const pageSize = 2;
+  const refreshQuotes = async () => {
+    setRefreshing(true);
+    setMarketError("");
+    try {
+      const symbols = holdings.map((holding) => holding.symbol).join(",");
+      const requestedPages = Math.max(1, Math.ceil(holdings.length / 4));
+      const pages = await Promise.all(
+        Array.from({ length: requestedPages }, (_, index) => index + 1).map(
+          async (pageNum) => {
+            const response = await fetch(
+              `/api/market?page=${pageNum}&symbols=${encodeURIComponent(symbols)}`,
+            );
+            if (!response.ok)
+              throw new Error(
+                `Yahoo quote request failed (${response.status})`,
+              );
+            return response.json();
+          },
+        ),
+      );
+      const nextQuotes = Object.fromEntries(
+        pages
+          .flatMap((item) => item.data || [])
+          .map((quote) => [quote.symbol, quote]),
+      );
+      setQuotes(nextQuotes);
+      setUpdatedAt(new Date().toISOString());
+      if (!Object.values(nextQuotes).some((quote) => quote.price != null))
+        setMarketError(
+          "Yahoo Finance did not return live quotes. Sample prices are shown.",
+        );
+    } catch (error) {
+      setMarketError(`${error.message}. Sample prices are shown.`);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  useEffect(() => {
+    refreshQuotes();
+  }, [holdings]);
+  useEffect(() => {
+    localStorage.setItem("finn-portfolio-holdings", JSON.stringify(holdings));
+  }, [holdings]);
+  const addHolding = (event) => {
+    event.preventDefault();
+    const rawTicker = newTicker.trim().toUpperCase();
+    if (!/^[A-Z][A-Z0-9.-]{0,19}$/.test(rawTicker)) {
+      setAddHoldingError(
+        "Enter a valid listed ticker, for example INFY or INFY.NS.",
+      );
+      return;
+    }
+    const exchange = rawTicker.endsWith(".BO") ? ".BO" : ".NS";
+    const baseTicker = canonicalTicker(rawTicker);
+    const symbol = `${baseTicker}${exchange}`;
+    if (holdings.some((holding) => holding.symbol === symbol)) {
+      setAddHoldingError(`${symbol} is already in your portfolio.`);
+      return;
+    }
+    const detail = companyDetails[baseTicker];
+    const metadata = portfolioCompanyMetadata[baseTicker];
+    const fallbackName = baseTicker.replace(/[.-]/g, " ");
+    setHoldings((current) => [
+      ...current,
+      {
+        name: metadata?.name || detail?.name || fallbackName,
+        symbol,
+        samplePrice: 0,
+        sector: metadata?.sector || detail?.sector || "Sector not loaded",
+      },
+    ]);
+    setPage(Math.ceil((holdings.length + 1) / pageSize));
+    setNewTicker("");
+    setAddHoldingError("");
+  };
+  const allRows = holdings.map((holding) => {
+    const quote = quotes[holding.symbol];
+    const live = quote?.price != null;
+    return {
+      ...holding,
+      price: live
+        ? `₹${Number(quote.price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+        : holding.samplePrice
+          ? `₹${holding.samplePrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
+          : "—",
+      change:
+        live && quote.changePct != null
+          ? `${quote.changePct >= 0 ? "+" : ""}${quote.changePct.toFixed(2)}%`
+          : "Sample",
+      volume: live ? quote.volume : "",
+      dayOpen: live ? quote.open : null,
+      dayHigh: live ? quote.high : null,
+      dayLow: live ? quote.low : null,
+      priceSource: live ? quote.source : "Sample preview",
+      asOf: live ? quote.asOf : "",
+      freshness: live ? quote.freshness : "sample",
+    };
+  });
+  const visibleRows = allRows.slice((page - 1) * pageSize, page * pageSize);
+  const pageCount = Math.ceil(allRows.length / pageSize);
+  return (
+    <main className="content figma-screen portfolio-detail">
+      <div className="figma-notice">
+        FINN · PORTFOLIO{" "}
+        <span className="live-pill">● EOD · YAHOO FINANCE</span>
+      </div>
+      <section className="mandate-card">
+        <div className="mandate-head">
+          <div>
+            <h2>FINN · Portfolio</h2>
+            <p>Aditya Singhania Mandate · Class Alpha</p>
+          </div>
+          <div className="mandate-icons">
+            <button
+              aria-label="Refresh market data"
+              title="Refresh market data"
+              onClick={refreshQuotes}
+              disabled={refreshing}
+            >
+              <RefreshCw size={14} className={refreshing ? "spin" : ""} />
+            </button>
+          </div>
+        </div>
+        <div className="export-book">
+          <div>
+            <span>EXPORT MANDATE BOOK</span>
+            <small>
+              {updatedAt
+                ? `Yahoo Finance · updated ${new Date(updatedAt).toLocaleTimeString()}`
+                : "Yahoo Finance · loading quotes"}
+            </small>
+          </div>
+          <div>
+            <button onClick={() => downloadPortfolioXlsx(allRows)}>
+              <Download size={14} /> Excel (.xlsx)
+            </button>
+            <button onClick={() => downloadPortfolioCsv(allRows)}>
+              <Download size={14} /> CSV (.csv)
+            </button>
+          </div>
+        </div>
+      </section>
+      {marketError && (
+        <p className="market-status" role="status">
+          {marketError}
+        </p>
+      )}
+      {!marketError && (
+        <p className="market-status">
+          {refreshing
+            ? "Updating Yahoo Finance quotes…"
+            : updatedAt
+              ? "Yahoo Finance end-of-day prices · delayed data may apply"
+              : "Loading quote data…"}
+        </p>
+      )}
+      <section className="nav-card">
+        <div className="nav-head">
+          <div>
+            <span>SAMPLE BOOK NAV</span>
+            <strong>
+              ₹420.80 <small>Cr</small>
+            </strong>
+          </div>
+          <b className="gain-pill">↗ +₹3.42 Cr (+0.82%)</b>
+        </div>
+        <div className="sparkline">
+          <i />
+          <i />
+          <i />
+          <i />
+          <i />
+          <i />
+          <i />
+          <i />
+          <i />
+          <i />
+        </div>
+        <div className="allocation">
+          <span>● Retail 44%</span>
+          <span>● EMS 26%</span>
+          <span>● Semicon 18%</span>
+          <span>● Cash 12%</span>
+        </div>
+      </section>
+      <div className="portfolio-section-title">
+        <strong>◉ My portfolio ({allRows.length})</strong>
+        <span>PORTFOLIO · {allRows.length} HOLDINGS</span>
+      </div>
+      <form className="add-holding-form" onSubmit={addHolding}>
+        <input
+          aria-label="Company ticker to add"
+          placeholder="Add a company ticker (e.g. INFY)"
+          value={newTicker}
+          onChange={(event) => setNewTicker(event.target.value.toUpperCase())}
+        />
+        <button className="primary" type="submit">
+          <Plus size={14} /> Add
+        </button>
+        {addHoldingError && <p role="status">{addHoldingError}</p>}
+      </form>
+      <div className="holding-cards">
+        {visibleRows.map((row) => (
+          <button
+            className="holding-card"
+            key={row.symbol}
+            onClick={() => {
+              setSelectedTicker(row.symbol.replace(/\.NS$/, ""));
+              setActive("pull");
+            }}
+          >
+            <div className="holding-card-top">
+              <div>
+                <strong>{row.name}</strong>
+                <span>{row.symbol}</span>
+              </div>
+              <div>
+                <b>{row.price}</b>
+                <small
+                  className={
+                    row.change.startsWith("-") ? "negative-text" : "green-text"
+                  }
+                >
+                  {row.change}
+                </small>
+              </div>
+            </div>
+            <span className="holding-chip">{row.sector}</span>
+            {row.freshness === "live" ? (
+              <span className="quote-detail">
+                Open {row.dayOpen ?? "—"} · High {row.dayHigh ?? "—"} · Low{" "}
+                {row.dayLow ?? "—"} · Volume{" "}
+                {row.volume?.toLocaleString("en-IN") ?? "—"}
+              </span>
+            ) : (
+              <span className="quote-detail">
+                Sample price · Yahoo quote unavailable
+              </span>
+            )}
+            <ChevronRight size={14} />
+          </button>
+        ))}
+      </div>
+      <div className="pagination">
+        <button disabled={page === 1} onClick={() => setPage(1)}>
+          ‹
+        </button>
+        <span>
+          {page} / {pageCount}
+        </span>
+        <button
+          disabled={page === pageCount}
+          onClick={() => setPage(Math.min(page + 1, pageCount))}
+        >
+          ›
+        </button>
+      </div>
+    </main>
+  );
+}
+
+function DetailedProfile({ setActive }) {
+  return (
+    <main className="content figma-screen profile-detail">
+      <div className="figma-notice">SAMPLE DATA · CONNECTED PREVIEW</div>
+      <div className="profile-principal">
+        <div className="profile-photo">AS</div>
+        <div>
+          <span className="principal-pill">
+            <CircleDot size={8} /> MANAGING PRINCIPAL · ₹420.8 CR BOOK
+          </span>
+          <h1>Aditya Singhania</h1>
+          <h2>Senior Partner &amp; Fund Manager</h2>
+          <p>♧ IIT Bombay '12 · IIM Ahmedabad '14</p>
+        </div>
+        <button className="icon-button">
+          <Settings2 size={16} />
+        </button>
+      </div>
+      <div className="profile-metrics">
+        <div>
+          <span>Active Ties</span>
+          <strong>412</strong>
+          <small className="green-text">↗ +14%</small>
+        </div>
+        <div>
+          <span>Portco Overlaps</span>
+          <strong>64</strong>
+          <small>♧ 8 Lead</small>
+        </div>
+        <div>
+          <span>Warm Routes</span>
+          <strong className="green-text">18</strong>
+          <small>Verified</small>
+        </div>
+      </div>
+      <div className="source-heading">
+        <h2>♧ Connected Intelligence Sources</h2>
+        <span>5 Active</span>
+      </div>
+      {[
+        [
+          "LinkedIn Pro / Sales Navigator",
+          "Connected · 1,840 Connections synced",
+          "Active",
+        ],
+        [
+          "Google Contacts / Workspace",
+          "Connected · 920 Work Contacts, calendar",
+          "Active",
+        ],
+        [
+          "Apple Mail & iMessage",
+          "Local Device Bridge · Extractors",
+          "Private Device",
+        ],
+      ].map(([title, sub, status]) => (
+        <button
+          className="source-card"
+          key={title}
+          onClick={() => setActive("network")}
+        >
+          <span className="source-icon">□</span>
+          <span>
+            <strong>{title}</strong>
+            <small>{sub}</small>
+          </span>
+          <b>{status}</b>
+          <ChevronRight size={14} />
+        </button>
+      ))}
+    </main>
+  );
+}
+
+function DetailedAsk({ setActive, selectedTicker }) {
+  const selectedCompany =
+    companyDetails[selectedTicker] || companyDetails.TRENT;
+  const [query, setQuery] = useState(
+    `Research ${selectedCompany.name}: summarize operating performance, cash quality, risks, and relevant network context.`,
+  );
+  const [status, setStatus] = useState("idle");
+  const [answer, setAnswer] = useState("");
+  const submit = async () => {
+    if (!query.trim()) return;
+    setStatus("loading");
+    try {
+      const response = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query,
+          context: askContext.filter((item) => item.ticker === selectedTicker),
+          network: people,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "FINN unavailable");
+      setAnswer(data.answer || "No answer returned.");
+      setStatus("done");
+    } catch (error) {
+      setAnswer(error.message);
+      setStatus("error");
+    }
+  };
+  return (
+    <main className="content figma-screen ask-detail">
+      <div className="figma-notice">SAMPLE AI · CONNECTED PREVIEW</div>
+      {status === "idle" && (
+        <>
+          <h1>
+            Ask a better
+            <br />
+            <em>question.</em>
+          </h1>
+          <p className="lede">
+            Start with a question. FINN brings the numbers and the supporting
+            context together.
+          </p>
+          <section className="example-question">
+            <span>YOUR QUESTION · {selectedCompany.name.toUpperCase()}</span>
+            <textarea
+              className="ask-query-input"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              aria-label="Ask FINN a question"
+            />
+            <p>
+              FINN will answer using this company’s available context and
+              identify missing evidence.
+            </p>
+          </section>
+          <button className="primary ask-cta" onClick={submit}>
+            Ask FINN <ArrowUpRight size={16} />
+          </button>
+          <section className="context-card">
+            <h3>A clearer view, with context</h3>
+            <p>
+              Compare guidance with results
+              <br />
+              Check cash conversion and leverage
+              <br />
+              Trace an answer back to its sources
+            </p>
+          </section>
+        </>
+      )}
+      {status === "loading" && (
+        <>
+          <h1>
+            Reading the evidence<span className="ellipsis">…</span>
+          </h1>
+          <p className="lede">
+            This preview is using the research already in your terminal.
+          </p>
+          <section className="researching-card">
+            <h3>Comparing guidance and results</h3>
+            <p>
+              01&nbsp;&nbsp;Reading management commentary
+              <br />
+              02&nbsp;&nbsp;Reviewing reported results
+              <br />
+              03&nbsp;&nbsp;Summarizing the differences
+            </p>
+            <div className="progress-line">
+              <i />
+            </div>
+          </section>
+          <button
+            className="secondary cancel-button"
+            onClick={() => setStatus("idle")}
+          >
+            <Pause size={14} /> Cancel
+          </button>
+        </>
+      )}
+      {status === "done" && (
+        <>
+          <h1>
+            Promises vs.
+            <br />
+            <em>delivery.</em>
+          </h1>
+          <p className="lede">{selectedCompany.name} · company research</p>
+          <section className="example-question">
+            <span>EXAMPLE QUESTION</span>
+            <strong>{query}</strong>
+          </section>
+          <section className="answer-detail">
+            <h2>Expansion on track. Margins below guidance.</h2>
+            <div className="markdown-content answer-markdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {answer}
+              </ReactMarkdown>
+            </div>
+            <div className="answer-metrics">
+              <div>
+                <span>STORE OPENINGS</span>
+                <strong>
+                  Guidance 45–50&nbsp;&nbsp;/&nbsp;&nbsp;Actual 48
+                </strong>
+              </div>
+              <div>
+                <span>EBITDA MARGIN</span>
+                <strong>
+                  Guidance 11.0%&nbsp;&nbsp;/&nbsp;&nbsp;Actual 10.6%
+                </strong>
+              </div>
+            </div>
+          </section>
+          <div className="answer-source-row">
+            <span>
+              <FileText size={14} /> Primary sources
+            </span>
+            <button onClick={() => setActive("export")}>
+              <ExternalLink size={14} /> Export preview
+            </button>
+          </div>
+        </>
+      )}
+      {status === "error" && (
+        <section className="answer-detail">
+          <h2>FINN is unavailable.</h2>
+          <p>{answer}</p>
+          <button className="primary" onClick={submit}>
+            Retry <RefreshCw size={14} />
+          </button>
+        </section>
+      )}
+    </main>
+  );
+}
+
+function ExportPreview({ setActive }) {
+  const rows = [
+    {
+      name: "Trent Limited",
+      symbol: "TRENT.NS",
+      price: "₹6,890.00",
+      change: "+1.8%",
+      sector: "Retail Hypergrowth",
+    },
+    {
+      name: "Titan Company",
+      symbol: "TITAN.NS",
+      price: "₹3,912.40",
+      change: "+2.84%",
+      sector: "Consumer Discretionary",
+    },
+  ];
+  return (
+    <main className="content figma-screen export-detail">
+      <div className="figma-notice">EXPORT PREVIEW · SAMPLE DATA</div>
+      <h1>
+        Review your
+        <br />
+        <em>export.</em>
+      </h1>
+      <p className="lede">
+        A clear handoff from your research to a portable report.
+      </p>
+      <section className="export-preview-card">
+        <h2>Portfolio book</h2>
+        <p>FINN-portfolio.xlsx</p>
+        <span>Excel workbook · XLSX</span>
+        <small>
+          The selected report uses the sample figures shown in this preview.
+        </small>
+      </section>
+      <section className="export-note-card">
+        <h3>Download the sample portfolio</h3>
+        <p>
+          Choose a format. Your browser will download a file to your device.
+        </p>
+        <div className="share-actions">
+          <button
+            className="secondary"
+            onClick={() => downloadPortfolioCsv(rows)}
+          >
+            <Download size={14} /> Download CSV
+          </button>
+          <button
+            className="primary"
+            onClick={() => downloadPortfolioXlsx(rows)}
+          >
+            <Download size={14} /> Download Excel
+          </button>
+        </div>
+      </section>
+      <button
+        className="primary back-button"
+        onClick={() => setActive("portfolio")}
+      >
+        Back to where I was
+      </button>
+    </main>
+  );
+}
+
+function App() {
+  const [active, setActive] = useState("push");
+  const [selectedTicker, setSelectedTicker] = useState("TRENT");
+  const [dark, setDark] = useState(true);
+  const [phoneContacts, setPhoneContacts] = useState([]);
+  const view =
+    active === "push" ? (
+      <DetailedPush
+        setActive={setActive}
+        setSelectedTicker={setSelectedTicker}
+        phoneContacts={phoneContacts}
+      />
+    ) : active === "pull" ? (
+      <DetailedPull
+        setActive={setActive}
+        selectedTicker={selectedTicker}
+        setSelectedTicker={setSelectedTicker}
+        phoneContacts={phoneContacts}
+      />
+    ) : active === "network" ? (
+      <DetailedNetwork
+        setActive={setActive}
+        phoneContacts={phoneContacts}
+        setPhoneContacts={setPhoneContacts}
+      />
+    ) : active === "portfolio" ? (
+      <DetailedPortfolio
+        setActive={setActive}
+        setSelectedTicker={setSelectedTicker}
+      />
+    ) : active === "profile" ? (
+      <DetailedProfile setActive={setActive} />
+    ) : active === "export" ? (
+      <ExportPreview setActive={setActive} />
+    ) : (
+      <DetailedAsk setActive={setActive} selectedTicker={selectedTicker} />
+    );
+  return (
+    <div className={dark ? "app dark" : "app light"}>
+      <div className="shell">
+        <Header
+          active={active === "ask-answer" ? "ask" : active}
+          dark={dark}
+          setDark={setDark}
+          setActive={setActive}
+        />
+        {view}
+        <BottomNav
+          active={active === "ask-answer" ? "ask" : active}
+          setActive={setActive}
+        />
+      </div>
+    </div>
+  );
+}
+
+createRoot(document.getElementById("root")).render(<App />);
