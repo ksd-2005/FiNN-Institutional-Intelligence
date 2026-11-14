@@ -60,7 +60,9 @@ function normalizeCompany(name = "") {
 }
 
 function parseFeedDate(value = "") {
-  const indiaDate = value.match(
+  if (value == null || value === "") return null;
+  const dateText = String(value);
+  const indiaDate = dateText.match(
     /^(\d{1,2})[-/ ]([A-Za-z]{3}|\d{1,2})[-/ ](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
   );
   if (indiaDate) {
@@ -77,7 +79,7 @@ function parseFeedDate(value = "") {
     );
     return new Date(utc - 330 * 60_000);
   }
-  const parsed = Date.parse(value);
+  const parsed = Date.parse(dateText);
   return Number.isFinite(parsed) ? new Date(parsed) : null;
 }
 
