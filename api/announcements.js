@@ -223,12 +223,16 @@ function asAnnouncement(row, exchange) {
   }
 
   const company = String(
-    row.companyName || row.company || row.symbol || "",
+    row.sm_name || row.companyName || row.company || row.symbol || "",
   ).trim();
   const ticker = String(row.symbol || "").trim();
-  const headline = String(
-    row.subject || row.desc || row.description || row.headline || "",
+  const subject = String(row.subject || row.desc || row.headline || "").trim();
+  const details = String(
+    row.attchmntText || row.description || row.summary || "",
   ).trim();
+  const headline = [subject, details]
+    .filter((value, index, values) => value && values.indexOf(value) === index)
+    .join(" · ");
   const attachment = String(
     row.attchmntFile || row.attachment || row.url || "",
   ).trim();
@@ -238,7 +242,10 @@ function asAnnouncement(row, exchange) {
       ? `https://www.nseindia.com${attachment.startsWith("/") ? "" : "/"}${attachment}`
       : "";
   const filedAt = asIstTimestamp(
-    row.broadcastDateTime ||
+    row.an_dt ||
+      row.sort_date ||
+      row.exchdisstime ||
+      row.broadcastDateTime ||
       row.date ||
       row.timestamp ||
       row.broadcastDate ||
@@ -434,6 +441,28 @@ async function fetchBse() {
   let lastError;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      let cookie = "";
+      try {
+        const landing = await fetch("https://www.bseindia.com/", {
+          headers: {
+            ...requestHeaders,
+            accept: "text/html,application/xhtml+xml",
+            referer: "https://www.bseindia.com/rss-feed",
+          },
+          signal: AbortSignal.timeout(8_000),
+        });
+        const landingCookies =
+          landing.headers.getSetCookie?.() ||
+          (landing.headers.get("set-cookie") || "").split(
+            /,\s*(?=[^;,]+=)/,
+          );
+        cookie = landingCookies
+          .map((item) => item.split(";")[0])
+          .filter(Boolean)
+          .join("; ");
+      } catch {
+        // Still attempt the public RSS URL if BSE's landing page is unavailable.
+      }
       const response = await fetch(
         process.env.BSE_ANNOUNCEMENTS_RSS_URL || BSE_RSS,
         {
@@ -443,14 +472,23 @@ async function fetchBse() {
             "user-agent":
               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             referer: "https://www.bseindia.com/rss-feed",
+            ...(cookie ? { cookie } : {}),
           },
           signal: AbortSignal.timeout(10_000),
         },
       );
       if (!response.ok) throw new Error(`BSE returned HTTP ${response.status}`);
-      const rows = parseBseRss(await response.text());
-      if (!rows.length)
-        throw new Error("BSE returned no readable announcement items");
+      const contentType = response.headers.get("content-type") || "unknown";
+      const xml = await response.text();
+      const rows = parseBseRss(xml);
+      if (!rows.length) {
+        const looksLikeHtml = /<\s*!doctype\s+html|<\s*html\b/i.test(xml);
+        throw new Error(
+          looksLikeHtml
+            ? "BSE returned an HTML block page instead of RSS"
+            : `BSE RSS contained no parseable items (content-type: ${contentType})`,
+        );
+      }
       return rows;
     } catch (error) {
       lastError = error;
