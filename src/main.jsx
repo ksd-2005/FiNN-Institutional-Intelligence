@@ -1625,7 +1625,7 @@ function localDateInputValue(date) {
   return `${year}-${month}-${day}`;
 }
 
-function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
+function DetailedPush({ setActive, setSelectedTicker, setSelectedFilingContext, phoneContacts }) {
   const [range, setRange] = useState("7D");
   const [customStart, setCustomStart] = useState(() =>
     localDateInputValue(new Date(Date.now() - 24 * 60 * 60 * 1000)),
@@ -2152,7 +2152,16 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
                     </button>
                     {group.ticker && (
                       <button className="text-button" onClick={() => {
+                        const filing = group.filings.find((entry) => entry.category === "results") || group.filings[0];
                         setSelectedTicker(canonicalTicker(group.ticker));
+                        setSelectedFilingContext({
+                          company: group.name,
+                          ticker: canonicalTicker(group.ticker),
+                          title: filing?.headline || `${group.name} exchange filing`,
+                          category: filing?.category || "unclassified",
+                          filedAt: filing?.filedAt || "",
+                          sources: filing?.links || [],
+                        });
                         setActive("ask");
                       }}>
                         Results brief
@@ -2273,6 +2282,7 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
                       </button>
                       <button className="text-button" onClick={() => {
                         setSelectedTicker(ticker);
+                        setSelectedFilingContext(null);
                         setActive("ask");
                       }}>Results brief</button>
                     </div>
@@ -2325,6 +2335,7 @@ function DetailedPull({
   setActive,
   selectedTicker,
   setSelectedTicker,
+  setSelectedFilingContext,
   phoneContacts,
   remoteTickerDirectory = [],
 }) {
@@ -2494,6 +2505,7 @@ function DetailedPull({
           className="primary"
           onClick={() => {
             selectResearchTicker(ticker);
+            setSelectedFilingContext(null);
             setActive("ask");
           }}
         >
@@ -2759,7 +2771,7 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts, authSessi
   const [draftActionBusy, setDraftActionBusy] = useState("");
   const contactPickerAvailable =
     typeof navigator !== "undefined" &&
-    "contacts" in navigator;
+    typeof navigator.contacts?.select === "function";
   const loadSampleContacts = async () => {
     setSampleContactsLoading(true);
     try {
@@ -2883,10 +2895,7 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts, authSessi
       <section className="phone-contact-card">
         <div>
           <strong>Bring in your contacts</strong>
-          <p>
-            Android Chrome can open the phone contact picker. On iPhone, import
-            selected contacts as a .vcf file. {authSession ? "Chosen contacts sync to your account." : "Contacts stay in this browser tab; sign in from Profile to sync them across visits."}
-          </p>
+          <p>Works only on Chrome or Safari browsers.</p>
         </div>
         <div className="phone-contact-actions">
           <button
@@ -3578,7 +3587,7 @@ function AccountPanel({ authSession, setAuthSession, phoneContacts, setPhoneCont
         </form>
       )}
       {message && <p className="account-message" role="status">{message}</p>}
-      {!accountAuthConfigured && <small className="muted">Configure VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY locally and in Vercel to turn on sign-in.</small>}
+      {!accountAuthConfigured && <small className="muted">Account sync isn’t configured yet.</small>}
     </section>
   );
 }
@@ -3658,7 +3667,7 @@ function DetailedProfile({ setActive, authSession, setAuthSession, phoneContacts
   );
 }
 
-function DetailedAsk({ setActive, selectedTicker }) {
+function DetailedAsk({ setActive, selectedTicker, selectedFilingContext }) {
   const selectedRecord = bundledTickerDirectory.find(
     (row) => row.ticker === canonicalTicker(selectedTicker),
   );
@@ -3669,9 +3678,11 @@ function DetailedAsk({ setActive, selectedTicker }) {
     sources: [],
   };
   const [companyResearch, setCompanyResearch] = useState(null);
-  const [query, setQuery] = useState(
-    `Research ${selectedCompany.name} using only supplied filings, annual reports, and earnings-call transcripts. Compare the latest quarter with the prior quarter (QoQ) and the same quarter last year (YoY) for Revenue, EBITDA, PBT, and PAT. Also cover business segments and revenue mix, multi-year trajectory, balance sheet and working-capital cycle, cash flow/FCF/cash conversion, management narrative versus reported numbers, explicitly stated guidance, and a concise bull case versus bear case. Mark every unavailable metric and cite only supplied primary sources.`,
-  );
+  const researchPrompt = `Research ${selectedCompany.name} using only supplied filings, annual reports, and earnings-call transcripts. Compare the latest quarter with the prior quarter (QoQ) and the same quarter last year (YoY) for Revenue, EBITDA, PBT, and PAT. Also cover business segments and revenue mix, multi-year trajectory, balance sheet and working-capital cycle, cash flow/FCF/cash conversion, management narrative versus reported numbers, explicitly stated guidance, and a concise bull case versus bear case. Mark every unavailable metric and cite only supplied primary sources.`;
+  const filingPrompt = selectedFilingContext
+    ? `Prepare a concise results brief for ${selectedFilingContext.company}. Use the selected exchange filing link as the source. Extract Revenue, EBITDA, PBT, and PAT, plus QoQ and YoY comparisons only when the filing supports them. Identify what is missing; do not infer figures.`
+    : researchPrompt;
+  const [query, setQuery] = useState(filingPrompt);
   const [status, setStatus] = useState("idle");
   const [answer, setAnswer] = useState("");
   useEffect(() => {
@@ -3684,14 +3695,31 @@ function DetailedAsk({ setActive, selectedTicker }) {
     return () => { cancelled = true; };
   }, [selectedTicker]);
   useEffect(() => {
-    setQuery(`Research ${selectedCompany.name} using only supplied filings, annual reports, and earnings-call transcripts. Compare the latest quarter with the prior quarter (QoQ) and the same quarter last year (YoY) for Revenue, EBITDA, PBT, and PAT. Also cover business segments and revenue mix, multi-year trajectory, balance sheet and working-capital cycle, cash flow/FCF/cash conversion, management narrative versus reported numbers, explicitly stated guidance, and a concise bull case versus bear case. Mark every unavailable metric and cite only supplied primary sources.`);
+    setQuery(filingPrompt);
     setAnswer("");
     setStatus("idle");
-  }, [selectedTicker]);
+  }, [selectedTicker, selectedFilingContext]);
   const submit = async () => {
     if (!query.trim()) return;
     setStatus("loading");
     try {
+      if (selectedFilingContext?.sources?.[0]?.url) {
+        const response = await fetch("/api/filing-brief", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            url: selectedFilingContext.sources[0].url,
+            title: selectedFilingContext.title,
+            company: selectedFilingContext.company,
+            ticker: selectedFilingContext.ticker,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not read the filing.");
+        setAnswer(data.answer || "No brief returned.");
+        setStatus("done");
+        return;
+      }
       const response = await fetch("/api/ask", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -3701,13 +3729,21 @@ function DetailedAsk({ setActive, selectedTicker }) {
           company: {
             name: selectedCompany.name,
             sector: selectedCompany.sector,
-            liveFundamentals: companyResearch,
+            liveFundamentals: selectedFilingContext ? null : companyResearch,
             networkContext: people.filter((person) =>
               JSON.stringify(person).toLowerCase().includes(canonicalTicker(selectedTicker).toLowerCase()),
             ),
           },
-          context: [],
-          network: [
+          context: selectedFilingContext ? selectedFilingContext.sources.map((source) => ({
+            title: selectedFilingContext.title,
+            type: selectedFilingContext.category,
+            date: selectedFilingContext.filedAt,
+            company: selectedFilingContext.company,
+            ticker: selectedFilingContext.ticker,
+            source: source.source,
+            url: source.url,
+          })) : [],
+          network: selectedFilingContext ? [] : [
             ...people,
             ...getStoredSampleNetworkContacts().filter((person) => {
               const searchContext = `${selectedCompany.name} ${selectedCompany.sector} ${canonicalTicker(selectedTicker)}`.toLowerCase();
@@ -3741,7 +3777,7 @@ function DetailedAsk({ setActive, selectedTicker }) {
             context together.
           </p>
           <section className="example-question">
-            <span>YOUR QUESTION · {selectedCompany.name.toUpperCase()}</span>
+            <span>{selectedFilingContext ? "SELECTED FILING · " : "YOUR QUESTION · "}{selectedFilingContext?.company?.toUpperCase() || selectedCompany.name.toUpperCase()}</span>
             <textarea
               className="ask-query-input"
               value={query}
@@ -3752,6 +3788,11 @@ function DetailedAsk({ setActive, selectedTicker }) {
               FINN will answer using this company’s available context and
               identify missing evidence.
             </p>
+            {selectedFilingContext?.sources?.[0]?.url && (
+              <a className="ask-filing-source" href={selectedFilingContext.sources[0].url} target="_blank" rel="noreferrer">
+                Open selected {selectedFilingContext.sources[0].source || "exchange"} filing
+              </a>
+            )}
           </section>
           <button className="primary ask-cta" disabled={status === "loading"} aria-busy={status === "loading"} onClick={submit}>
             {status === "loading" ? "Researching…" : "Ask FINN"} <ArrowUpRight size={16} />
@@ -3927,6 +3968,7 @@ function LaunchSplash({ onComplete, dark = false }) {
 function App() {
   const [active, setActive] = useState("push");
   const [selectedTicker, setSelectedTicker] = useState("TRENT");
+  const [selectedFilingContext, setSelectedFilingContext] = useState(null);
   const [dark, setDark] = useState(() => localStorage.getItem("finn-theme") === "dark");
   const [phoneContacts, setPhoneContacts] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem("finn-phone-contacts") || "[]"); }
@@ -3994,6 +4036,7 @@ function App() {
       <DetailedPush
         setActive={setActive}
         setSelectedTicker={setSelectedTicker}
+        setSelectedFilingContext={setSelectedFilingContext}
         phoneContacts={phoneContacts}
       />
     ) : active === "pull" ? (
@@ -4001,6 +4044,7 @@ function App() {
         setActive={setActive}
         selectedTicker={selectedTicker}
         setSelectedTicker={setSelectedTicker}
+        setSelectedFilingContext={setSelectedFilingContext}
         phoneContacts={phoneContacts}
         remoteTickerDirectory={remoteTickerDirectory}
       />
@@ -4029,7 +4073,7 @@ function App() {
     ) : active === "export" ? (
       <ExportPreview setActive={setActive} />
     ) : (
-      <DetailedAsk setActive={setActive} selectedTicker={selectedTicker} />
+      <DetailedAsk setActive={setActive} selectedTicker={selectedTicker} selectedFilingContext={selectedFilingContext} />
     );
   return (
     <div className={dark ? "app dark" : "app light"}>
