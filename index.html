@@ -17,14 +17,27 @@
   </head>
   <body>
     <div id="root">
-      <div style="min-height:100vh;display:grid;place-items:center;background:#f6f7fa;color:#1c1c1e;font-family:Inter,system-ui,sans-serif;padding:24px;text-align:center">
-        <div style="max-width:420px">
-          <div style="font-size:28px;margin-bottom:12px">↗ FINN</div>
-          <h1 style="font-size:20px;margin:0 0 10px">Start the local web server</h1>
-          <p style="color:#55555d;line-height:1.5;margin:0">This React app cannot run by double-clicking this HTML file. In Terminal, run <code>npm install</code>, then <code>npm run dev</code>, and open <code>http://localhost:5173</code>.</p>
+      <div id="startup-fallback" style="min-height:100vh;display:grid;place-items:center;background:#f6f7fa;color:#1c1c1e;font-family:-apple-system,BlinkMacSystemFont,Inter,system-ui,sans-serif;text-align:center">
+        <div>
+          <div style="width:72px;height:72px;margin:0 auto 18px;border:1px solid rgba(40,70,120,.16);border-radius:22px;background:rgba(255,255,255,.78);display:grid;place-items:center;box-shadow:0 12px 36px rgba(24,42,72,.10)">
+            <img src="/assets/finn-logo.svg" alt="" width="48" height="48" />
+          </div>
+          <strong style="font-size:20px;letter-spacing:.18em">FINN</strong>
+          <p style="margin:8px 0 0;color:#667085;font-size:13px;letter-spacing:.12em">LOADING YOUR WORKSPACE</p>
         </div>
       </div>
     </div>
+    <script>
+      if (document.documentElement.dataset.theme === "dark") {
+        const fallback = document.getElementById("startup-fallback");
+        fallback.style.background = "#090a0d";
+        fallback.style.color = "#f5f6f8";
+        fallback.querySelector("p").style.color = "#aeb3bf";
+        const mark = fallback.querySelector("div > div");
+        mark.style.background = "rgba(38,40,47,.82)";
+        mark.style.borderColor = "rgba(255,255,255,.16)";
+      }
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
