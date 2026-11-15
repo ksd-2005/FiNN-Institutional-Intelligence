@@ -2652,14 +2652,14 @@ function DetailedPull({
         </section>
       )}
       <section className="network-research-card">
-        <div>
+        <div className="network-research-heading">
           <h3>Who can explain {displayName}?</h3>
-          <p>
-            Three illustrative company and industry profiles for a demo outreach
-            workflow.
-          </p>
+          <span className="tier-pill">SAMPLE PROFILES</span>
         </div>
-        <span className="tier-pill">SAMPLE PROFILES</span>
+        <p>
+          Three illustrative company and industry profiles for a demo outreach
+          workflow.
+        </p>
         <div className="contact-strip">
           <div className="avatar-stack">
             {experts.map((expert) => (

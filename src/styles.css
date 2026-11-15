@@ -2023,9 +2023,19 @@ html[data-theme="dark"], html[data-theme="dark"] body { color: #f5f5f7; backgrou
   position: relative;
 }
 
+.network-research-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+
 .network-research-card h3 {
+  flex: 1 1 220px;
   margin: 0 0 5px;
   font-size: 15px;
+  min-width: min(100%, 220px);
 }
 
 .network-research-card p {
@@ -2035,9 +2045,9 @@ html[data-theme="dark"], html[data-theme="dark"] body { color: #f5f5f7; backgrou
 }
 
 .tier-pill {
-  position: absolute;
-  top: 15px;
-  right: 14px;
+  position: static;
+  flex: none;
+  margin-left: auto;
 }
 
 .contact-strip {
