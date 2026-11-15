@@ -25,10 +25,21 @@ export default async function handler(req, res) {
   const data = await Promise.all(
     slice.map(async (symbol) => {
       try {
-        const response = await fetch(
-          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1mo&interval=1d`,
-        );
-        if (!response.ok) throw new Error("Yahoo unavailable");
+        let response;
+        let lastError;
+        for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+          try {
+            response = await fetch(
+              `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?range=1mo&interval=1d`,
+              { headers: { accept: "application/json", "user-agent": "FINN portfolio demo/1.0" }, signal: AbortSignal.timeout(5000) },
+            );
+            if (response.ok) break;
+            lastError = new Error(`Yahoo ${host} returned HTTP ${response.status}`);
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        if (!response?.ok) throw lastError || new Error("Yahoo unavailable");
         const json = await response.json();
         const result = json.chart.result?.[0];
         const meta = result?.meta || {};

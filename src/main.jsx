@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { strToU8, zipSync } from "fflate";
 import {
   ArrowUpRight,
+  ArrowDownRight,
   ArrowDownUp,
   Bell,
   BookOpen,
@@ -1613,7 +1614,7 @@ function localDateInputValue(date) {
 }
 
 function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
-  const [range, setRange] = useState("24H");
+  const [range, setRange] = useState("7D");
   const [customStart, setCustomStart] = useState(() =>
     localDateInputValue(new Date(Date.now() - 24 * 60 * 60 * 1000)),
   );
@@ -1627,7 +1628,7 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
   const [announcementMeta, setAnnouncementMeta] = useState(null);
   const [portfolioOnly, setPortfolioOnly] = useState(true);
   const [sortOrder, setSortOrder] = useState("newest");
-  const [showRoutine, setShowRoutine] = useState(false);
+  const [showRoutine, setShowRoutine] = useState(true);
   const [alertPreferences, setAlertPreferences] = useState(readAlertPreferences);
   const [alertSettingsOpen, setAlertSettingsOpen] = useState(false);
   const [alertStatus, setAlertStatus] = useState("");
@@ -1962,6 +1963,14 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
       filing.filedAt = item.filedAt;
     }
   }
+  for (const group of companyGroups) {
+    if (group.ticker) continue;
+    const holding = savedHoldings.find((row) =>
+      normalizeCompanyKey(row.name) === group.key ||
+      normalizeCompanyKey(portfolioCompanyMetadata[canonicalTicker(row.symbol)]?.name || "") === group.key,
+    );
+    if (holding) group.ticker = canonicalTicker(holding.symbol);
+  }
   companyGroups.sort((a, b) => a.priorityRank - b.priorityRank ||
     (sortOrder === "newest" ? b.latestAt - a.latestAt : a.latestAt - b.latestAt));
   for (const group of companyGroups)
@@ -2003,7 +2012,7 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
         <div className="push-feed-filters">
           <span>Priority filings first</span>
           <button type="button" className={`routine-toggle ${showRoutine ? "selected" : ""}`} aria-pressed={showRoutine} onClick={() => setShowRoutine(!showRoutine)}>
-            {showRoutine ? "Hide routine" : "Show routine filings"}
+            {showRoutine ? "Routine filings shown" : "Show routine filings"}
           </button>
         </div>
         <button
@@ -2236,6 +2245,10 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
                       >
                         Research
                       </button>
+                      <button className="text-button" onClick={() => {
+                        setSelectedTicker(ticker);
+                        setActive("ask");
+                      }}>Results brief</button>
                     </div>
                   );
                 })}
@@ -3085,30 +3098,35 @@ const defaultPortfolioHoldings = [
     name: "Trent Limited",
     symbol: "TRENT.NS",
     samplePrice: 6890,
+    sampleChangePct: -0.47,
     sector: "Retail Hypergrowth",
   },
   {
     name: "Titan Company",
     symbol: "TITAN.NS",
     samplePrice: 3912.4,
+    sampleChangePct: 2.84,
     sector: "Consumer Discretionary",
   },
   {
     name: "Dixon Technologies",
     symbol: "DIXON.NS",
     samplePrice: 11842.1,
+    sampleChangePct: 1.12,
     sector: "Electronics Manufacturing",
   },
   {
     name: "Uno Minda",
     symbol: "UNOMINDA.NS",
     samplePrice: 1128.65,
+    sampleChangePct: -0.64,
     sector: "Auto Components",
   },
   {
     name: "Reliance Industries",
     symbol: "RELIANCE.NS",
     samplePrice: 2946.3,
+    sampleChangePct: 0.83,
     sector: "Diversified",
   },
 ];
@@ -3135,9 +3153,23 @@ function loadPortfolioHoldings() {
   return defaultPortfolioHoldings;
 }
 
+function demoPriceForTicker(ticker) {
+  const key = canonicalTicker(ticker);
+  const hash = [...key].reduce((value, char) => value + char.charCodeAt(0), 0);
+  return Math.round((700 + (hash * 83) % 5200) * 100) / 100;
+}
+
+function demoChangeForTicker(ticker) {
+  const key = canonicalTicker(ticker);
+  const hash = [...key].reduce((value, char) => value + char.charCodeAt(0), 0);
+  return (hash % 401 - 200) / 100;
+}
+
 function DetailedPortfolio({ setActive, setSelectedTicker }) {
   const [holdings, setHoldings] = useState(loadPortfolioHoldings);
   const [newTicker, setNewTicker] = useState("");
+  const [tickerSuggestions, setTickerSuggestions] = useState([]);
+  const [tickerSuggestionsOpen, setTickerSuggestionsOpen] = useState(false);
   const [addHoldingError, setAddHoldingError] = useState("");
   const [page, setPage] = useState(1);
   const [quotes, setQuotes] = useState({});
@@ -3145,6 +3177,25 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
   const [updatedAt, setUpdatedAt] = useState("");
   const [marketError, setMarketError] = useState("");
   const pageSize = 2;
+  useEffect(() => {
+    const query = newTicker.trim();
+    if (!query) { setTickerSuggestions([]); return; }
+    const local = bundledTickerDirectory
+      .filter((row) => row.ticker.toLowerCase().includes(query.toLowerCase()) || row.name.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, 6);
+    setTickerSuggestions(local);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`/api/tickers?q=${encodeURIComponent(query)}`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : null)
+        .then((payload) => {
+          if (!Array.isArray(payload?.data)) return;
+          setTickerSuggestions((current) => [...new Map([...current, ...payload.data].map((row) => [row.ticker, row])).values()].slice(0, 6));
+        })
+        .catch(() => {});
+    }, 150);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [newTicker]);
   const refreshQuotes = async () => {
     setRefreshing(true);
     setMarketError("");
@@ -3190,10 +3241,13 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
   }, [holdings]);
   const addHolding = (event) => {
     event.preventDefault();
-    const rawTicker = newTicker.trim().toUpperCase();
-    if (!/^[A-Z][A-Z0-9.-]{0,19}$/.test(rawTicker)) {
+    const typed = newTicker.trim();
+    const exactCompany = tickerSuggestions.find((row) => row.ticker.toLowerCase() === typed.toLowerCase() || row.name.toLowerCase() === typed.toLowerCase());
+    const match = exactCompany || tickerSuggestions[0];
+    const rawTicker = String(match?.ticker || typed).toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9.&-]{0,19}$/.test(rawTicker)) {
       setAddHoldingError(
-        "Enter a valid listed ticker, for example INFY or INFY.NS.",
+        "Choose a company suggestion or enter its listed ticker, for example INFY.",
       );
       return;
     }
@@ -3206,13 +3260,16 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
     }
     const detail = companyDetails[baseTicker];
     const metadata = portfolioCompanyMetadata[baseTicker];
-    const fallbackName = baseTicker.replace(/[.-]/g, " ");
+    const fallbackName = match?.name || baseTicker.replace(/[.-]/g, " ");
+    const demoPrice = demoPriceForTicker(baseTicker);
+    const demoChange = demoChangeForTicker(baseTicker);
     setHoldings((current) => [
       ...current,
       {
         name: metadata?.name || detail?.name || fallbackName,
         symbol,
-        samplePrice: 0,
+        samplePrice: demoPrice,
+        sampleChangePct: demoChange,
         sector: metadata?.sector || detail?.sector || "Sector not loaded",
       },
     ]);
@@ -3227,18 +3284,17 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
       ...holding,
       price: live
         ? `₹${Number(quote.price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
-        : holding.samplePrice
-          ? `₹${holding.samplePrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`
-          : "—",
+        : `₹${(holding.samplePrice || demoPriceForTicker(holding.symbol)).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`,
+      changePct: live && quote.changePct != null ? Number(quote.changePct) : Number(holding.sampleChangePct ?? demoChangeForTicker(holding.symbol)),
       change:
         live && quote.changePct != null
           ? `${quote.changePct >= 0 ? "+" : ""}${quote.changePct.toFixed(2)}%`
-          : "Sample",
+          : `Sample ${Number(holding.sampleChangePct ?? demoChangeForTicker(holding.symbol)) >= 0 ? "+" : ""}${Number(holding.sampleChangePct ?? demoChangeForTicker(holding.symbol)).toFixed(2)}%`,
       volume: live ? quote.volume : "",
       dayOpen: live ? quote.open : null,
       dayHigh: live ? quote.high : null,
       dayLow: live ? quote.low : null,
-      priceSource: live ? quote.source : "Sample preview",
+      priceSource: live ? quote.source : "Demo sample",
       asOf: live ? quote.asOf : "",
       freshness: live ? quote.freshness : "sample",
     };
@@ -3335,12 +3391,26 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
         <span>PORTFOLIO · {allRows.length} HOLDINGS</span>
       </div>
       <form className="add-holding-form" onSubmit={addHolding}>
-        <input
-          aria-label="Company ticker to add"
-          placeholder="Add a company ticker (e.g. INFY)"
-          value={newTicker}
-          onChange={(event) => setNewTicker(event.target.value.toUpperCase())}
-        />
+        <div className="portfolio-company-search-wrap">
+          <input
+            aria-label="Company name or ticker to add"
+            placeholder="Search company name or ticker (e.g. Mahindra)"
+            value={newTicker}
+            autoComplete="off"
+            onFocus={() => setTickerSuggestionsOpen(true)}
+            onChange={(event) => { setNewTicker(event.target.value); setTickerSuggestionsOpen(true); }}
+            onKeyDown={(event) => { if (event.key === "Escape") setTickerSuggestionsOpen(false); }}
+          />
+          {tickerSuggestionsOpen && tickerSuggestions.length > 0 && (
+            <div className="portfolio-ticker-suggestions">
+              {tickerSuggestions.map((row) => (
+                <button key={row.ticker} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setNewTicker(row.ticker); setTickerSuggestionsOpen(false); }}>
+                  <span><strong>{row.name}</strong><small>{row.sector}</small></span><b>{row.ticker}</b>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button className="primary" type="submit">
           <Plus size={14} /> Add
         </button>
@@ -3363,17 +3433,13 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
               </div>
               <div>
                 <b>{row.price}</b>
-                <small
-                  className={
-                    row.change.startsWith("-") ? "negative-text" : "green-text"
-                  }
-                >
-                  {row.change}
+                <small className={row.changePct < 0 ? "negative-text" : "green-text"}>
+                  {row.changePct < 0 ? <ArrowDownRight size={13} aria-hidden="true" /> : <TrendingUp size={13} aria-hidden="true" />}{row.change}
                 </small>
               </div>
             </div>
             <span className="holding-chip">{row.sector}</span>
-            {row.freshness === "live" ? (
+            {row.freshness === "eod" || row.freshness === "live" ? (
               <span className="quote-detail">
                 Open {row.dayOpen ?? "—"} · High {row.dayHigh ?? "—"} · Low{" "}
                 {row.dayLow ?? "—"} · Volume{" "}
@@ -3381,7 +3447,7 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
               </span>
             ) : (
               <span className="quote-detail">
-                Sample price · Yahoo quote unavailable
+                Demo sample price · Yahoo Finance EOD quote unavailable
               </span>
             )}
             <ChevronRight size={14} />
@@ -3665,7 +3731,7 @@ function DetailedAsk({ setActive, selectedTicker }) {
             Reading the evidence<span className="ellipsis">…</span>
           </h1>
           <p className="lede">
-            This preview is using the research already in your terminal.
+            FINN is checking the available research service. A backup is tried automatically if the first one times out.
           </p>
           <section className="researching-card">
             <h3>Comparing guidance and results</h3>
@@ -3701,25 +3767,10 @@ function DetailedAsk({ setActive, selectedTicker }) {
             <strong>{query}</strong>
           </section>
           <section className="answer-detail">
-            <h2>Expansion on track. Margins below guidance.</h2>
             <div className="markdown-content answer-markdown">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {answer}
               </ReactMarkdown>
-            </div>
-            <div className="answer-metrics">
-              <div>
-                <span>STORE OPENINGS</span>
-                <strong>
-                  Guidance 45–50&nbsp;&nbsp;/&nbsp;&nbsp;Actual 48
-                </strong>
-              </div>
-              <div>
-                <span>EBITDA MARGIN</span>
-                <strong>
-                  Guidance 11.0%&nbsp;&nbsp;/&nbsp;&nbsp;Actual 10.6%
-                </strong>
-              </div>
             </div>
           </section>
           <div className="answer-source-row">
@@ -3833,7 +3884,7 @@ function LaunchSplash({ onComplete }) {
 function App() {
   const [active, setActive] = useState("push");
   const [selectedTicker, setSelectedTicker] = useState("TRENT");
-  const [dark, setDark] = useState(true);
+  const [dark, setDark] = useState(() => localStorage.getItem("finn-theme") === "dark");
   const [phoneContacts, setPhoneContacts] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem("finn-phone-contacts") || "[]"); }
     catch { return []; }
@@ -3841,6 +3892,9 @@ function App() {
   const [authSession, setAuthSession] = useState(() => readAccountSession());
   const [remoteTickerDirectory, setRemoteTickerDirectory] = useState([]);
   const [booting, setBooting] = useState(true);
+  useEffect(() => {
+    localStorage.setItem("finn-theme", dark ? "dark" : "light");
+  }, [dark]);
   useEffect(() => {
     sessionStorage.setItem("finn-phone-contacts", JSON.stringify(phoneContacts));
   }, [phoneContacts]);

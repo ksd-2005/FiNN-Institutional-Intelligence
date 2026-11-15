@@ -4080,6 +4080,26 @@ body {
 .app.light .research-search {
   background: rgba(236, 239, 246, 0.96);
 }
+.app .content { font-size: 16px; }
+.app .content :is(p, li, label, input, textarea) { font-size: max(14px, 0.94rem); }
+.app .content :is(small, .muted) { font-size: max(12px, 0.82rem); }
+.app .content button,
+.app .content .text-button,
+.app .content a.text-button { font-size: max(13px, 0.86rem); }
+.app .content :is(h2, h3) { font-size: max(17px, 1.08rem); }
+.app .holding-card-top > div:last-child small { display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; }
+.portfolio-company-search-wrap { position: relative; flex: 1 1 230px; min-width: 0; display: grid; gap: 6px; }
+.portfolio-company-search-wrap > input { width: 100%; }
+.portfolio-ticker-suggestions { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--glass-card); box-shadow: var(--glass-shadow); }
+.portfolio-ticker-suggestions button { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 11px; border: 0; border-bottom: 1px solid var(--line); color: var(--text); background: transparent; text-align: left; cursor: pointer; }
+.portfolio-ticker-suggestions button:last-child { border-bottom: 0; }
+.portfolio-ticker-suggestions button span { display: grid; gap: 3px; }
+.portfolio-ticker-suggestions button strong { font-size: 13px; }
+.portfolio-ticker-suggestions button small { color: var(--muted); font-size: 11px; }
+.portfolio-ticker-suggestions button b { color: var(--accent-text); font: 11px "DM Mono", monospace; }
+.app.light .portfolio-ticker-suggestions { background: #fff; }
+.app .holding-card-top .negative-text,
+.app .holding-card-top .green-text { font-size: 14px; }
 .push-feed-filters { display: flex; align-items: center; gap: 8px; }
 .routine-toggle {
   min-height: 30px;
