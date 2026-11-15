@@ -109,6 +109,29 @@ The `api/` directory contains Vercel-compatible server functions. The browser do
 
 The feed is intentionally honest about completeness: RSS fallback is treated as a latest-items snapshot rather than a complete historical archive.
 
+### Exchange article and filing briefs
+
+FINN treats an exchange announcement as both a live signal and a doorway to the underlying primary document. The workflow is:
+
+1. Push displays a normalized NSE/BSE announcement with company, category, filing date, source exchange, headline, and source link.
+2. The user can open the original exchange document directly.
+3. The user can select Results brief or Ask FINN from a filing-linked company card.
+4. The browser sends the selected source URL, company, ticker, category, and headline to `/api/filing-brief`.
+5. The server validates the URL against NSE/BSE-owned domains. It does not accept an arbitrary URL supplied by the browser.
+6. Redirect destinations are validated again, preventing a trusted-looking exchange link from redirecting the server to an unrelated or internal address.
+7. The server downloads the document with a 12 MB limit and confirms that the response is a PDF.
+8. The PDF text is extracted server-side, capped at 42,000 characters, and cached briefly to avoid repeated downloads.
+9. The extracted text is sent to Hyde, or Gemini if Hyde is unavailable, together with a strict filing-only instruction.
+10. The client renders the resulting Markdown brief and keeps the official source link available for verification.
+
+The filing brief prompt asks the model to report Revenue, EBITDA, PBT, and PAT when explicitly present; preserve the filing's units; distinguish standalone from consolidated results; include QoQ and YoY comparisons only when both periods and values are available; use unambiguous fiscal-year or period-end labels; identify disclosed guidance; and say when information is absent. The model is not allowed to fill missing values from outside knowledge or infer unsupported comparisons.
+
+This creates three deliberately separate research modes:
+
+- **Announcement mode**: what changed at the exchange and why it is relevant to the portfolio.
+- **Filing-brief mode**: what one selected NSE/BSE document explicitly says.
+- **Company-research mode**: a broader question using retrieved fundamentals, selected primary-source context, and limited network context.
+
 ### Market data and alerts
 
 1. Portfolio symbols are sent to `/api/market` in bounded pages.
@@ -176,6 +199,8 @@ The filing workflow is more constrained than general Q&A:
 10. Require explicit periods for QoQ and YoY comparisons.
 
 This design reduces unsupported model claims and also protects the server from arbitrary URL fetching.
+
+The UI exposes the filing source alongside the answer so the user can move from summary back to evidence. This is important for an investment workflow: the AI is an interpretation layer over the document, not a replacement for the primary filing.
 
 ## Storage and state
 
