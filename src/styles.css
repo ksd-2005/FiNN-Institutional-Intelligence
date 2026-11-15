@@ -1,10 +1,11 @@
 :root {
   font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, system-ui,
-    sans-serif;
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, Roboto,
+    "Segoe UI", system-ui, sans-serif;
   color: #1c1c1e;
   background: #f6f7fa;
-  font-synthesis: none;
+  /* Allow Android/system fallback fonts to synthesize bold when needed. */
+  font-synthesis: weight style;
   text-rendering: optimizeLegibility;
 }
 * {

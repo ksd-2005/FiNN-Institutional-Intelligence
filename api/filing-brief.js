@@ -4,9 +4,16 @@ const briefCache = new Map();
 const ALLOWED_HOSTS = ["nseindia.com", "bseindia.com"];
 
 function allowedUrl(value) {
-  const url = new URL(value);
-  if (url.protocol !== "https:" || !ALLOWED_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`)))
-    throw new Error("Only official NSE and BSE filing links are accepted.");
+  let url;
+  try { url = new URL(String(value).trim()); }
+  catch { throw new Error("The filing link is not a valid URL."); }
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  const officialHost = ALLOWED_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  if (!officialHost) throw new Error(`The filing host “${host || "unknown"}” is not an official NSE or BSE host.`);
+  if (url.username || url.password || !["https:", "http:"].includes(url.protocol))
+    throw new Error("The filing link must use HTTP or HTTPS without embedded credentials.");
+  if (url.protocol === "http:") url.protocol = "https:";
+  if (url.port && url.port !== "443") throw new Error("Non-standard filing-link ports are not accepted.");
   return url;
 }
 
