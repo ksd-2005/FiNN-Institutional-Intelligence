@@ -25,7 +25,7 @@ export const tickerDirectory = [
   ["DMART", "Avenue Supermarts", "Retail"],
   ["DRREDDY", "Dr. Reddy's Laboratories", "Pharma"],
   ["EICHERMOT", "Eicher Motors", "Automobile"],
-  ["ETERNAL", "Eternal (Zomato)", "Internet"],
+  ["ETERNAL", "Eternal (formerly Zomato)", "Internet"],
   ["FEDERALBNK", "Federal Bank", "Banking"],
   ["FUSIONCX", "Fusion CX", "Business services"],
   ["GAIL", "GAIL India", "Energy"],
@@ -84,5 +84,4 @@ export const tickerDirectory = [
   ["UNOMINDA", "Uno Minda", "Auto components"],
   ["VEDL", "Vedanta", "Metals"],
   ["WIPRO", "Wipro", "IT services"],
-  ["ZOMATO", "Zomato", "Internet"],
 ].map(([ticker, name, sector]) => ({ ticker, name, sector }));

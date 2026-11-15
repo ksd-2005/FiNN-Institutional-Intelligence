@@ -17,7 +17,7 @@ export default async function handler(req, res) {
     .map((value) =>
       value.endsWith(".NS") || value.endsWith(".BO") ? value : `${value}.NS`,
     )
-    .filter((value) => /^[A-Z0-9^.-]{1,24}$/.test(value));
+    .filter((value) => /^[A-Z0-9^.&-]{1,24}$/.test(value));
   const symbols = requestedSymbols.length
     ? [...new Set(requestedSymbols)].slice(0, 100)
     : portfolioSymbols;
@@ -26,21 +26,42 @@ export default async function handler(req, res) {
     slice.map(async (symbol) => {
       try {
         const response = await fetch(
-          `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=5d&interval=1d`,
+          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1mo&interval=1d`,
         );
         if (!response.ok) throw new Error("Yahoo unavailable");
         const json = await response.json();
         const result = json.chart.result?.[0];
         const meta = result?.meta || {};
-        const closes =
-          result?.indicators?.quote?.[0]?.close?.filter(Boolean) || [];
+        const rawQuote = result?.indicators?.quote?.[0] || {};
+        const timestamps = result?.timestamp || [];
+        const nowIndia = new Date(Date.now() + 330 * 60_000);
+        const indiaDate = `${nowIndia.getUTCFullYear()}-${String(nowIndia.getUTCMonth() + 1).padStart(2, "0")}-${String(nowIndia.getUTCDate()).padStart(2, "0")}`;
+        const indiaWeekday = new Date(Date.UTC(nowIndia.getUTCFullYear(), nowIndia.getUTCMonth(), nowIndia.getUTCDate())).getUTCDay();
+        const indiaHour = nowIndia.getUTCHours();
+        const indiaMinute = nowIndia.getUTCMinutes();
+        const isSessionInProgress = indiaWeekday > 0 && indiaWeekday < 6 &&
+          (indiaHour < 16 || (indiaHour === 16 && indiaMinute === 0));
+        const latestBarDate = timestamps.length
+          ? new Date(timestamps.at(-1) * 1000 + 330 * 60_000).toISOString().slice(0, 10)
+          : "";
+        const completedCount = isSessionInProgress && latestBarDate === indiaDate
+          ? Math.max(0, timestamps.length - 1)
+          : timestamps.length;
+        const closes = (rawQuote.close || []).slice(0, completedCount).filter(Boolean);
         const price = closes.at(-1) ?? meta.regularMarketPrice;
         const previous = closes.at(-2) ?? meta.previousClose;
-        const quote = result?.indicators?.quote?.[0] || {};
+        const quote = Object.fromEntries(Object.entries(rawQuote).map(([key, values]) => [key, (values || []).slice(0, completedCount)]));
         const volume =
           quote.volume?.filter((value) => value != null).at(-1) ??
           meta.regularMarketVolume ??
           null;
+        const recentVolumes = (quote.volume || [])
+          .filter((value) => value != null)
+          .slice(0, -1)
+          .slice(-20);
+        const averageVolume = recentVolumes.length
+          ? recentVolumes.reduce((sum, value) => sum + value, 0) / recentVolumes.length
+          : null;
         return {
           symbol,
           price,
@@ -50,11 +71,13 @@ export default async function handler(req, res) {
           high: quote.high?.filter((value) => value != null).at(-1) ?? null,
           low: quote.low?.filter((value) => value != null).at(-1) ?? null,
           volume,
+          averageVolume,
+          volumeMultiple: volume != null && averageVolume ? volume / averageVolume : null,
           currency: meta.currency,
           exchange: meta.exchangeName,
           asOf: new Date().toISOString(),
           source: "Yahoo Finance",
-          freshness: price == null ? "unavailable" : "live",
+          freshness: price == null ? "unavailable" : "eod",
         };
       } catch (error) {
         return {

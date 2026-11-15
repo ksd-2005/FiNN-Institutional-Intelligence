@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -42,15 +42,53 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { askContext, companyDetails } from "./data";
+import { companyDetails } from "./data";
 import { tickerDirectory as bundledTickerDirectory } from "./ticker-directory";
+import {
+  accountAuthConfigured,
+  loadAccountContacts,
+  readAccountSession,
+  refreshAccountSession,
+  saveAccountSession,
+  signInWithEmail,
+  signOutAccount,
+  signUpWithEmail,
+  syncAccountContacts,
+} from "./auth";
 
 const portfolioCompanyMetadata = {
   ORIANA: { name: "Oriana Power Ltd", sector: "Renewable Energy" },
   ESPRIT: { name: "Esprit Stones Ltd", sector: "Engineered Stones" },
   FUSIONCX: { name: "Fusion CX Ltd", sector: "Business Services" },
 };
-const tickerAliases = { FUSION: "FUSIONCX" };
+const tickerAliases = { FUSION: "FUSIONCX", ZOMATO: "ETERNAL" };
+const alertableCategories = [
+  ["results", "Results"], ["M&A", "M&A"], ["management_change", "Management change"],
+  ["fund_raise", "Fund raise"], ["litigation", "Litigation"], ["capex", "Capex"],
+  ["credit_rating", "Credit rating"], ["insider_trading", "Insider trading"],
+  ["dividend", "Dividend"], ["bonus_split", "Bonus / split"],
+  ["investor_meetings", "Investor meetings"], ["earnings_call", "Earnings calls"],
+  ["press_release", "Press releases"], ["postal_ballot", "Postal ballot"],
+  ["agm_egm", "AGM / EGM"], ["pledging", "Pledging"],
+];
+const priorityCategories = new Set([
+  "results", "M&A", "management_change", "fund_raise", "litigation",
+  "capex", "credit_rating", "insider_trading", "pledging",
+]);
+const initialAlertPreferences = {
+  enabled: true,
+  marketMoves: true,
+  priceMovePct: 3,
+  volumeMultiple: 2,
+  categories: ["results", "M&A", "management_change", "fund_raise", "litigation", "capex"],
+};
+
+function readAlertPreferences() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("finn-push-alert-preferences") || "null");
+    return saved ? { ...initialAlertPreferences, ...saved } : initialAlertPreferences;
+  } catch { return initialAlertPreferences; }
+}
 
 function canonicalTicker(value = "") {
   const base = String(value)
@@ -1096,7 +1134,7 @@ function Ask({ setActive }) {
     </main>
   );
 }
-function DraftShareDialog({ recipient, initialText, onClose }) {
+function DraftShareDialog({ recipient, email = "", initialText, onClose }) {
   const [text, setText] = useState(initialText);
   const [message, setMessage] = useState("");
   const shareWhatsApp = () =>
@@ -1116,7 +1154,7 @@ function DraftShareDialog({ recipient, initialText, onClose }) {
         <h2>Draft message</h2>
         <p>
           To {recipient}. Review and edit before sharing; FINN will not send it
-          for you.
+          for you. {email ? "This is a synthetic sample recipient; the example.com address will not deliver mail." : ""}
         </p>
         <textarea
           value={text}
@@ -1154,6 +1192,11 @@ function DraftShareDialog({ recipient, initialText, onClose }) {
           <button className="primary" onClick={shareWhatsApp}>
             WhatsApp
           </button>
+          {email && (
+            <button className="secondary" onClick={() => window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("A question from FINN")}&body=${encodeURIComponent(text)}`}>
+              Email draft
+            </button>
+          )}
           <button className="text-button" onClick={onClose}>
             Close
           </button>
@@ -1427,7 +1470,26 @@ const sampleCompanyExperts = {
   ],
 };
 
+function getStoredSampleNetworkContacts() {
+  try { return JSON.parse(localStorage.getItem("finn-sample-network-contacts") || "[]"); }
+  catch { return []; }
+}
+
 function getSampleCompanyExperts(ticker, company) {
+  const sampleContacts = getStoredSampleNetworkContacts();
+  const sector = companyDetails[ticker]?.sector || "";
+  const terms = [ticker, company, ...sector.split(/[^a-z0-9]+/i).filter((word) => word.length > 5)]
+    .filter(Boolean).map((word) => word.toLowerCase());
+  const matched = sampleContacts.filter((person) =>
+    terms.some((term) => `${person.company} ${person.sector} ${person.expertise}`.toLowerCase().includes(term)),
+  ).slice(0, 3);
+  if (matched.length) return matched.map((person) => ({
+    name: person.name,
+    role: `${person.role} · ${person.company}`,
+    detail: `${person.relationship} · ${person.expertise}`,
+    email: person.email,
+    synthetic: true,
+  }));
   return (
     sampleCompanyExperts[ticker] || [
       {
@@ -1475,7 +1537,7 @@ function WhoCanExplainDialog({ company, ticker, onClose, onDraft, onCall }) {
         </div>
         <p>
           Illustrative demo profiles only. These are not verified people or real
-          connections.
+          connections. Load the 120 sample contacts on Network to use the demo directory in Push and Pull.
         </p>
         <div className="expert-list">
           {experts.map((expert) => (
@@ -1490,6 +1552,7 @@ function WhoCanExplainDialog({ company, ticker, onClose, onDraft, onCall }) {
                 <strong>{expert.name}</strong>
                 <span>{expert.role}</span>
                 <small>{expert.detail}</small>
+                {expert.email && <small>Synthetic email: {expert.email}</small>}
               </div>
               <div className="expert-actions">
                 <button className="secondary" onClick={() => onDraft(expert)}>
@@ -1562,8 +1625,16 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
   const [announcementLoaded, setAnnouncementLoaded] = useState(false);
   const [announcementRefreshing, setAnnouncementRefreshing] = useState(false);
   const [announcementMeta, setAnnouncementMeta] = useState(null);
-  const [portfolioOnly, setPortfolioOnly] = useState(false);
+  const [portfolioOnly, setPortfolioOnly] = useState(true);
   const [sortOrder, setSortOrder] = useState("newest");
+  const [showRoutine, setShowRoutine] = useState(false);
+  const [alertPreferences, setAlertPreferences] = useState(readAlertPreferences);
+  const [alertSettingsOpen, setAlertSettingsOpen] = useState(false);
+  const [alertStatus, setAlertStatus] = useState("");
+  const [marketWatch, setMarketWatch] = useState([]);
+  const initialAnnouncementScan = useRef(false);
+  const initialMarketScan = useRef(false);
+  const seenAlertIds = useRef(null);
   const [expandedCompanies, setExpandedCompanies] = useState(false);
   const [expandedCompany, setExpandedCompany] = useState(null);
   const [contactCompany, setContactCompany] = useState(null);
@@ -1666,8 +1737,103 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
   const portfolioTickers = new Set(
     savedHoldings.map((holding) => canonicalTicker(holding.symbol)),
   );
+  const holdingsSymbols = savedHoldings.map((holding) => canonicalTicker(holding.symbol)).filter(Boolean);
+  const holdingsKey = holdingsSymbols.join(",");
+  useEffect(() => {
+    localStorage.setItem("finn-push-alert-preferences", JSON.stringify(alertPreferences));
+  }, [alertPreferences]);
+  useEffect(() => {
+    let cancelled = false;
+    const loadMarketWatch = async () => {
+      if (!holdingsKey || !alertPreferences.enabled || !alertPreferences.marketMoves) return;
+      try {
+        const chunks = [];
+        for (let index = 0; index < holdingsSymbols.length; index += 4)
+          chunks.push(holdingsSymbols.slice(index, index + 4));
+        const payloads = await Promise.all(chunks.map(async (chunk) => {
+          const response = await fetch(`/api/market?symbols=${encodeURIComponent(chunk.join(","))}`);
+          return response.ok ? response.json() : null;
+        }));
+        if (!cancelled) setMarketWatch(payloads.flatMap((payload) => payload?.data || []));
+      } catch {
+        if (!cancelled) setMarketWatch([]);
+      }
+    };
+    loadMarketWatch();
+    const timer = window.setInterval(loadMarketWatch, 5 * 60_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [holdingsKey, alertPreferences.enabled, alertPreferences.marketMoves]);
+  useEffect(() => {
+    if (!announcementLoaded) return;
+    const fire = (title, body, key) => {
+      try {
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") new Notification(title, { body, tag: key });
+        else setAlertStatus(`${title}: ${body} (Enable browser notifications in Alert rules.)`);
+      } catch {
+        setAlertStatus(`${title}: ${body}`);
+      }
+    };
+    const allIds = announcements.map((item) => item.id || `${item.ticker}-${item.filedAt}-${item.headline}`);
+    if (!initialAnnouncementScan.current) {
+      initialAnnouncementScan.current = true;
+      seenAlertIds.current = new Set(allIds);
+      return;
+    }
+    if (!seenAlertIds.current) {
+      try { seenAlertIds.current = new Set(JSON.parse(localStorage.getItem("finn-seen-push-alerts") || "[]")); }
+      catch { seenAlertIds.current = new Set(); }
+    }
+    const newlySeen = [];
+    for (const item of announcements) {
+      const id = item.id || `${item.ticker}-${item.filedAt}-${item.headline}`;
+      if (seenAlertIds.current.has(id)) continue;
+      seenAlertIds.current.add(id);
+      const filedAt = parseAnnouncementDate(item.filedAt)?.getTime() || 0;
+      if (Date.now() - filedAt <= 3 * 60_000 && filedAt <= Date.now() + 60_000) newlySeen.push(item);
+    }
+    try { localStorage.setItem("finn-seen-push-alerts", JSON.stringify([...seenAlertIds.current].slice(-1200))); } catch {}
+    if (!alertPreferences.enabled) return;
+    for (const item of newlySeen) {
+      const matchesPortfolio = portfolioKeys.has(item.companyKey || normalizeCompanyKey(item.company)) || portfolioTickers.has(canonicalTicker(item.ticker || ""));
+      if (!matchesPortfolio || !alertPreferences.categories.includes(item.category)) continue;
+      fire(`FINN · ${item.company}`, `${item.category.replaceAll("_", " ")}: ${item.headline}`, item.id || item.headline);
+    }
+  }, [announcements, announcementLoaded, alertPreferences, holdingsKey]);
+  useEffect(() => {
+    if (!alertPreferences.enabled || !alertPreferences.marketMoves) return;
+    if (!marketWatch.length) return;
+    let seen;
+    try { seen = new Set(JSON.parse(localStorage.getItem("finn-seen-market-alerts") || "[]")); }
+    catch { seen = new Set(); }
+    const dateTag = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+    const nextSeen = new Set(seen);
+    const firstScan = !initialMarketScan.current;
+    initialMarketScan.current = true;
+    for (const quote of marketWatch) {
+      const symbol = canonicalTicker(quote.symbol || "");
+      const movement = Math.abs(Number(quote.changePct));
+      const unusualVolume = Number(quote.volumeMultiple) >= Number(alertPreferences.volumeMultiple);
+      const unusualPrice = movement >= Number(alertPreferences.priceMovePct);
+      const conditions = [unusualPrice && "price", unusualVolume && "volume"].filter(Boolean);
+      for (const condition of conditions) {
+        const key = `${symbol}-${dateTag}-${condition}`;
+        if (nextSeen.has(key)) continue;
+        nextSeen.add(key);
+        if (firstScan) continue;
+        const company = savedHoldings.find((holding) => canonicalTicker(holding.symbol) === symbol)?.name || symbol;
+        const body = condition === "price"
+          ? `${quote.changePct > 0 ? "+" : ""}${Number(quote.changePct).toFixed(2)}% daily move crossed your ±${alertPreferences.priceMovePct}% rule.`
+          : `Volume is ${Number(quote.volumeMultiple).toFixed(1)}× its recent average (your threshold: ${alertPreferences.volumeMultiple}×).`;
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          try { new Notification(`FINN · ${company}`, { body, tag: key }); } catch {}
+        } else setAlertStatus(`${company}: ${body}`);
+      }
+    }
+    try { localStorage.setItem("finn-seen-market-alerts", JSON.stringify([...nextSeen].slice(-500))); } catch {}
+  }, [marketWatch, alertPreferences, holdingsKey]);
   const visibleLiveAnnouncements = announcements
     .filter((item) => isInSelectedRange(item.filedAt))
+    .filter((item) => showRoutine || priorityCategories.has(item.category))
     .filter(
       (item) =>
         !portfolioOnly ||
@@ -1676,6 +1842,10 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
         ) ||
         portfolioTickers.has((item.ticker || "").toUpperCase()),
     );
+  const hiddenRoutineExists = !showRoutine && announcements.some((item) =>
+    isInSelectedRange(item.filedAt) && !priorityCategories.has(item.category) &&
+    (!portfolioOnly || portfolioKeys.has(item.companyKey || normalizeCompanyKey(item.company)) || portfolioTickers.has(canonicalTicker(item.ticker || ""))),
+  );
   const companyGroups = [];
   const groupsByKey = new Map();
   for (const item of visibleLiveAnnouncements) {
@@ -1688,11 +1858,13 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
         filings: [],
         sources: new Set(),
         latestAt: 0,
+        priorityRank: priorityCategories.has(item.category) ? 0 : 1,
       };
       groupsByKey.set(key, group);
       companyGroups.push(group);
     }
     const group = groupsByKey.get(key);
+    group.priorityRank = Math.min(group.priorityRank, priorityCategories.has(item.category) ? 0 : 1);
     if (item.company.length > group.name.length) group.name = item.company;
     if (item.ticker && !/^\d+$/.test(item.ticker)) group.ticker = item.ticker;
     group.sources.add(item.source);
@@ -1790,12 +1962,12 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
       filing.filedAt = item.filedAt;
     }
   }
-  companyGroups.sort((a, b) =>
-    sortOrder === "newest" ? b.latestAt - a.latestAt : a.latestAt - b.latestAt,
-  );
+  companyGroups.sort((a, b) => a.priorityRank - b.priorityRank ||
+    (sortOrder === "newest" ? b.latestAt - a.latestAt : a.latestAt - b.latestAt));
   for (const group of companyGroups)
     group.filings.sort((a, b) =>
-      sortOrder === "newest" ? b.time - a.time : a.time - b.time,
+      Number(!priorityCategories.has(a.category)) - Number(!priorityCategories.has(b.category)) ||
+      (sortOrder === "newest" ? b.time - a.time : a.time - b.time),
     );
   return (
     <main className="content figma-screen push-detail">
@@ -1828,7 +2000,12 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
         </span>
       </div>
       <div className="feed-sort-row">
-        <span>Sort filings by date</span>
+        <div className="push-feed-filters">
+          <span>Priority filings first</span>
+          <button type="button" className={`routine-toggle ${showRoutine ? "selected" : ""}`} aria-pressed={showRoutine} onClick={() => setShowRoutine(!showRoutine)}>
+            {showRoutine ? "Hide routine" : "Show routine filings"}
+          </button>
+        </div>
         <button
           type="button"
           className="feed-sort-button"
@@ -1839,6 +2016,30 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
           {sortOrder === "newest" ? "Newest first" : "Oldest first"}
         </button>
       </div>
+      <details className="push-alert-rules" open={alertSettingsOpen} onToggle={(event) => setAlertSettingsOpen(event.currentTarget.open)}>
+        <summary><Bell size={13} /> Alert rules <span>{alertPreferences.enabled ? "On" : "Paused"}</span></summary>
+        <div className="push-alert-settings">
+          <label className="alert-enable-row"><input type="checkbox" checked={alertPreferences.enabled} onChange={(event) => setAlertPreferences((current) => ({ ...current, enabled: event.target.checked }))} /> Watch my portfolio</label>
+          <div className="alert-thresholds">
+            <label>Daily price move (%)<input type="number" min="0.5" max="50" step="0.5" value={alertPreferences.priceMovePct} onChange={(event) => setAlertPreferences((current) => ({ ...current, priceMovePct: Math.max(0.5, Number(event.target.value) || 0.5) }))} /></label>
+            <label>Volume vs. average (×)<input type="number" min="1" max="20" step="0.5" value={alertPreferences.volumeMultiple} onChange={(event) => setAlertPreferences((current) => ({ ...current, volumeMultiple: Math.max(1, Number(event.target.value) || 1) }))} /></label>
+          </div>
+          <label className="alert-enable-row"><input type="checkbox" checked={alertPreferences.marketMoves} onChange={(event) => setAlertPreferences((current) => ({ ...current, marketMoves: event.target.checked }))} /> Alert on Yahoo Finance daily moves and volume</label>
+          <span className="alert-category-label">Alert me about filings in</span>
+          <div className="alert-category-grid">
+            {alertableCategories.map(([category, label]) => (
+              <label key={category}><input type="checkbox" checked={alertPreferences.categories.includes(category)} onChange={(event) => setAlertPreferences((current) => ({ ...current, categories: event.target.checked ? [...new Set([...current.categories, category])] : current.categories.filter((item) => item !== category) }))} /> {label}</label>
+            ))}
+          </div>
+          <button className="text-button" type="button" onClick={async () => {
+            if (!("Notification" in window)) { setAlertStatus("This browser does not support desktop notifications."); return; }
+            const permission = await Notification.requestPermission();
+            setAlertStatus(permission === "granted" ? "Browser notifications enabled." : "Notifications were not enabled; alerts will appear in this page while it is open.");
+          }}>Enable browser notifications</button>
+          <small>Price and volume checks use Yahoo Finance daily bars and refresh every five minutes while this page is open. For alerts when the app is closed, a server push service is still required.</small>
+        </div>
+      </details>
+      {alertStatus && <p className="push-alert-status" role="status">{alertStatus}</p>}
       {range === "CUSTOM" && (
         <div className="custom-date-filter">
           <label>
@@ -1914,6 +2115,14 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
                     >
                       Who to ask
                     </button>
+                    {group.ticker && group.filings.some((filing) => filing.category === "results") && (
+                      <button className="text-button" onClick={() => {
+                        setSelectedTicker(canonicalTicker(group.ticker));
+                        setActive("ask");
+                      }}>
+                        Results brief
+                      </button>
+                    )}
                   </div>
                   {group.filings
                     .slice(0, expandedCompany === group.key ? undefined : 3)
@@ -1975,10 +2184,13 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
         ) : announcementLoaded ? (
           <div className="feed-empty-state">
             <p>
-              {portfolioOnly
+              {hiddenRoutineExists
+                ? "Only routine or unclassified filings are available for this selection; they are hidden to keep material items prominent."
+                : portfolioOnly
                 ? "No filings for your holdings were returned in the selected date range."
                 : "No exchange announcements were returned for this time range."}
             </p>
+            {hiddenRoutineExists && <button className="secondary" onClick={() => setShowRoutine(true)}>Show routine filings</button>}
             <p className="muted">
               Dated exchange data is available for recent filing history. RSS
               fallback data, when used, is only a latest-items snapshot.
@@ -2053,6 +2265,7 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
         <DraftShareDialog
           key={`${draftContact.company}-${draftContact.expert.name}`}
           recipient={draftContact.expert.name}
+          email={draftContact.expert.email}
           initialText={`Hi ${draftContact.expert.name}, I’m researching ${draftContact.company}. Could I ask you a few questions about your experience in this area?`}
           onClose={() => setDraftContact(null)}
         />
@@ -2084,6 +2297,7 @@ function DetailedPull({
   const [draftContact, setDraftContact] = useState(null);
   const [callContact, setCallContact] = useState(null);
   const [liveFundamentals, setLiveFundamentals] = useState(null);
+  const [liveQuote, setLiveQuote] = useState(null);
   const [fundamentalsError, setFundamentalsError] = useState("");
   const [fundamentalsLoading, setFundamentalsLoading] = useState(false);
   const portfolioHoldings = loadPortfolioHoldings();
@@ -2155,11 +2369,22 @@ function DetailedPull({
       cancelled = true;
     };
   }, [lookupTicker]);
-  const companyMeta = portfolioCompanyMetadata[canonicalTicker(ticker)];
-  const detail = companyDetails[canonicalTicker(ticker)] || {
-    name: companyMeta?.name || `${canonicalTicker(ticker)} Ltd`,
+  useEffect(() => {
+    let cancelled = false;
+    setLiveQuote(null);
+    fetch(`/api/market?symbols=${encodeURIComponent(canonicalTicker(lookupTicker))}`)
+      .then(async (response) => response.ok ? response.json() : null)
+      .then((payload) => { if (!cancelled) setLiveQuote(payload?.data?.[0] || null); })
+      .catch(() => { if (!cancelled) setLiveQuote(null); });
+    return () => { cancelled = true; };
+  }, [lookupTicker]);
+  const selectedTickerCode = canonicalTicker(lookupTicker);
+  const companyMeta = portfolioCompanyMetadata[selectedTickerCode] ||
+    tickerDirectory.find((row) => row.ticker === selectedTickerCode);
+  const detail = companyDetails[selectedTickerCode] || {
+    name: companyMeta?.name || `${selectedTickerCode} Ltd`,
     sector: companyMeta?.sector || "Company lookup",
-    exchange: `NSE · ${ticker}`,
+    exchange: `NSE · ${selectedTickerCode}`,
     snapshot:
       "Company facts are not loaded for this ticker yet. Open the linked source to review its published financials.",
     trajectory: "Not available in this preview.",
@@ -2168,8 +2393,8 @@ function DetailedPull({
     metrics: [],
     sources: [],
   };
-  const screenerTicker = /^[A-Z0-9.-]{1,20}$/.test(canonicalTicker(ticker))
-    ? canonicalTicker(ticker)
+  const screenerTicker = /^[A-Z0-9.&-]{1,20}$/.test(selectedTickerCode)
+    ? selectedTickerCode
     : "";
   const displayName = liveFundamentals?.name || detail.name;
   const experts = getSampleCompanyExperts(ticker, displayName);
@@ -2186,7 +2411,7 @@ function DetailedPull({
   };
   return (
     <main className="content figma-screen pull-detail">
-      <div className="figma-notice">SAMPLE DATA · CONNECTED PREVIEW</div>
+      <div className="figma-notice">COMPANY RESEARCH · LIVE LOOKUP</div>
       <div className="research-search-wrap">
         <div className="research-search">
           <Search size={16} />
@@ -2289,6 +2514,9 @@ function DetailedPull({
           <CircleDot size={9} /> Titan gross margin
         </button>
       </div>
+      {canonicalTicker(ticker) !== selectedTickerCode ? (
+        <div className="company-selection-hint">Choose a company suggestion or press search to load its data.</div>
+      ) : <>
       <section className="pull-company-card">
         <div className="company-title">
           <div className="ticker-badge blue-badge">{ticker.slice(0, 2)}</div>
@@ -2299,41 +2527,47 @@ function DetailedPull({
             </span>
           </div>
           <strong>
-            {liveFundamentals?.currentPrice || "—"}
-            <small className="muted"> Screener snapshot</small>
+            {liveQuote?.price != null
+              ? new Intl.NumberFormat("en-IN", { style: "currency", currency: liveQuote.currency || "INR", maximumFractionDigits: 2 }).format(liveQuote.price)
+              : liveFundamentals?.currentPrice || "—"}
+            <small className="muted"> {liveQuote?.price != null ? "Yahoo Finance · delayed/EOD" : "Screener snapshot"}</small>
           </strong>
         </div>
         <div className="metric-row four-col">
-          {detail.metrics.map(([label, value, change]) => (
+          {(liveFundamentals?.keyMetrics || []).map(({ label, value }) => (
             <div key={label}>
               <small>{label}</small>
-              <strong>{value}</strong>
-              <span>{change}</span>
+              <strong>{value || "—"}</strong>
+              <span>Screener · latest period</span>
             </div>
           ))}
           <div>
             <small>MKT CAP</small>
             <strong>{liveFundamentals?.marketCap || "—"}</strong>
-            <span>Source snapshot</span>
+            <span>{liveFundamentals ? "Screener snapshot" : "Unavailable"}</span>
           </div>
           <div>
             <small>P/E LTM</small>
             <strong>{liveFundamentals?.stockPE || "—"}</strong>
-            <span>Source snapshot</span>
-          </div>
-          <div>
-            <small>SSSG (Q3)</small>
-            <strong className="green-text">
-              {ticker === "TRENT" ? "+19.4%" : "—"}
-            </strong>
-            <span>
-              {ticker === "TRENT"
-                ? "Fashion retail · preview figure"
-                : "Not supplied"}
-            </span>
+            <span>{liveFundamentals ? "Screener snapshot" : "Unavailable"}</span>
           </div>
         </div>
       </section>
+      {liveFundamentals?.quarterlyHeadline?.length > 0 && (
+        <section className="quarterly-metrics">
+          <div className="section-title"><span>Latest quarter · QoQ and YoY</span><small>{liveFundamentals.quarterlyHeadline.find((item) => item.period)?.period || "Screener quarterly table"}</small></div>
+          <div className="quarterly-metric-grid">
+            {liveFundamentals.quarterlyHeadline.map((item) => (
+              <article key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.current || "Unavailable"}</strong>
+                <small>QoQ {item.qoq || "unavailable"} · YoY {item.yoy || "unavailable"}</small>
+              </article>
+            ))}
+          </div>
+          <small className="muted">Aggregated quarterly values from Screener. Verify against the linked exchange filing before relying on them.</small>
+        </section>
+      )}
       <section className="network-research-card">
         <div>
           <h3>Who can explain {displayName}?</h3>
@@ -2369,9 +2603,11 @@ function DetailedPull({
       <section className="research-sections">
         <div className="section-title">
           <span>Business snapshot</span>
-          <span className="muted">Primary sources</span>
+          <span className="muted">{companyDetails[selectedTickerCode] ? "Illustrative company notes" : liveFundamentals ? "Screener source" : "Source status"}</span>
         </div>
-        <p>{detail.snapshot}</p>
+        <p>{companyDetails[selectedTickerCode]
+          ? "The overview and operating commentary below are illustrative demo notes, not live filings. Figures are live only when retrieved from Screener or Yahoo Finance."
+          : detail.snapshot}</p>
         <div className="research-grid detailed-grid">
           <div>
             <span>Trajectory</span>
@@ -2388,9 +2624,7 @@ function DetailedPull({
           <div>
             <span>Sources</span>
             <strong>
-              {detail.sources.length
-                ? detail.sources.join(" · ")
-                : "No imported source files"}
+              {liveFundamentals?.source || "No source data loaded for this company"}
             </strong>
             {screenerTicker && (
               <a
@@ -2415,35 +2649,24 @@ function DetailedPull({
               for 15 minutes.
             </p>
           )}
-          {liveFundamentals?.tables?.profitLoss?.length > 0 && (
-            <div className="fundamentals-table-wrap">
-              <h3>Profit &amp; Loss · Source table</h3>
+          {[
+            ["Quarterly results", liveFundamentals?.tables?.quarterlyResults, liveFundamentals?.tables?.quarterlyPeriods],
+            ["Profit & Loss", liveFundamentals?.tables?.profitLoss, []],
+            ["Balance sheet", liveFundamentals?.tables?.balanceSheet, []],
+            ["Cash flow", liveFundamentals?.tables?.cashFlow, []],
+            ["Ratios", liveFundamentals?.tables?.ratios, []],
+          ].filter(([, rows]) => rows?.length > 0).map(([title, rows, periods]) => (
+            <div className="fundamentals-table-wrap" key={title}>
+              <h3>{title} · source table</h3>
               <table>
-                <thead>
-                  <tr>
-                    <th>Line item</th>
-                    {(liveFundamentals.tables.profitLoss[0]?.values || []).map(
-                      (_, index) => (
-                        <th key={index}>Period {index + 1}</th>
-                      ),
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {liveFundamentals.tables.profitLoss.slice(0, 8).map((row) => (
-                    <tr key={row.label}>
-                      <td>{row.label}</td>
-                      {row.values.map((value, index) => (
-                        <td key={index}>{value}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
+                <thead><tr><th>Line item</th>{rows[0].values.map((_, index) => <th key={index}>{periods?.[index] || `Period ${index + 1}`}</th>)}</tr></thead>
+                <tbody>{rows.slice(0, 12).map((row) => <tr key={row.label}><td>{row.label}</td>{row.values.map((value, index) => <td key={index}>{value}</td>)}</tr>)}</tbody>
               </table>
             </div>
-          )}
+          ))}
         </div>
       </section>
+      </>}
       {contactDialogOpen && (
         <WhoCanExplainDialog
           company={displayName}
@@ -2463,6 +2686,7 @@ function DetailedPull({
         <DraftShareDialog
           key={`${draftContact.company}-${draftContact.expert.name}`}
           recipient={draftContact.expert.name}
+          email={draftContact.expert.email}
           initialText={`Hi ${draftContact.expert.name}, I’m researching ${draftContact.company}. Could I ask you a few questions about your experience in this area?`}
           onClose={() => setDraftContact(null)}
         />
@@ -2479,16 +2703,49 @@ function DetailedPull({
   );
 }
 
-function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
+function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts, authSession }) {
   const [notice, setNotice] = useState("");
   const [phoneContactStatus, setPhoneContactStatus] = useState("");
   const [draftOpen, setDraftOpen] = useState(false);
+  const [draftRecipient, setDraftRecipient] = useState({ name: "Ananya Sen", email: "" });
+  const [sampleContacts, setSampleContacts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("finn-sample-network-contacts") || "[]"); }
+    catch { return []; }
+  });
+  const [sampleContactsLoading, setSampleContactsLoading] = useState(false);
+  const [sampleContactsExpanded, setSampleContactsExpanded] = useState(false);
   const [draftText, setDraftText] = useState(
     "Hi Ananya, I saw the latest update on the specialty fluoro-polymer capex cycle and thought of our earlier conversation. Would you have time for a quick catch-up this week?",
   );
   const contactPickerAvailable =
     typeof navigator !== "undefined" &&
     "contacts" in navigator;
+  const loadSampleContacts = async () => {
+    setSampleContactsLoading(true);
+    try {
+      const response = await fetch("/api/sample-contacts");
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Sample contacts are unavailable.");
+      setSampleContacts(payload.data || []);
+      localStorage.setItem("finn-sample-network-contacts", JSON.stringify(payload.data || []));
+      setNotice(`Loaded ${(payload.data || []).length} synthetic sample contacts.`);
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setSampleContactsLoading(false);
+    }
+  };
+  const hideSampleContacts = () => {
+    setSampleContacts([]);
+    localStorage.removeItem("finn-sample-network-contacts");
+    setSampleContactsExpanded(false);
+    setNotice("Sample contacts hidden. The demo dataset remains in the database.");
+  };
+  const prepareContactDraft = (person, company = person.sector || "your industry") => {
+    setDraftRecipient({ name: person.name, email: person.email || "" });
+    setDraftText(`Hi ${person.name.split(" ")[0]}, I’m looking into ${company}. Given your experience in ${person.expertise || person.role}, would you be open to sharing your perspective?`);
+    setDraftOpen(true);
+  };
   const choosePhoneContacts = async () => {
     if (!contactPickerAvailable) return;
     try {
@@ -2572,7 +2829,7 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
   };
   return (
     <main className="content figma-screen network-detail">
-      <div className="figma-notice">SAMPLE DATA · CONNECTED PREVIEW</div>
+      <div className="figma-notice">NETWORK · CONTACTS &amp; INTRODUCTIONS</div>
       <SectionKicker>INTELLIGENCE FABRIC</SectionKicker>
       <div className="network-title-row">
         <div>
@@ -2587,9 +2844,8 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
         <div>
           <strong>Bring in your contacts</strong>
           <p>
-            Android Chrome can open the phone contact picker. On iPhone, export
-            selected contacts as a .vcf file and import it here. Only chosen
-            contacts are added to this page session.
+            Android Chrome can open the phone contact picker. On iPhone, import
+            selected contacts as a .vcf file. {authSession ? "Chosen contacts sync to your account." : "Contacts stay in this browser tab; sign in from Profile to sync them across visits."}
           </p>
         </div>
         <div className="phone-contact-actions">
@@ -2628,6 +2884,45 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
               </li>
             ))}
           </ul>
+        )}
+        <div className="sample-contact-toolbar">
+          <div>
+            <strong>Sample contacts</strong>
+            <small>120 invented profiles for trying network search and outreach.</small>
+          </div>
+          {sampleContacts.length ? (
+            <button className="secondary" type="button" onClick={hideSampleContacts}>Hide samples</button>
+          ) : (
+            <button className="secondary" type="button" onClick={loadSampleContacts} disabled={sampleContactsLoading}>
+              {sampleContactsLoading ? "Loading…" : "Load sample contacts"}
+            </button>
+          )}
+        </div>
+        {sampleContacts.length > 0 && (
+          <>
+            <p className="sample-contact-status" role="status">Loaded {sampleContacts.length} synthetic contacts. Sample profiles and email addresses are fictional.</p>
+            <ul className="sample-contact-list">
+              {sampleContacts.slice(0, sampleContactsExpanded ? undefined : 8).map((person) => (
+                <li key={person.id}>
+                  <div className="sample-contact-copy">
+                    <strong>{person.name}</strong>
+                    <span>{person.role}, {person.company} · last spoke {new Date(`${person.last_spoke}T12:00:00`).toLocaleString("en", { month: "short", year: "numeric" })}</span>
+                    <small>{person.relationship} · {person.expertise}</small>
+                    {sampleContactsExpanded && <small className="sample-contact-bio">{person.bio}</small>}
+                  </div>
+                  <div className="sample-contact-actions">
+                    <button type="button" className="text-button" onClick={() => prepareContactDraft(person)}>Draft message</button>
+                    <a className="text-button" href={`mailto:${encodeURIComponent(person.email)}?subject=${encodeURIComponent("A question about " + person.sector)}`} title="Opens a draft addressed to a reserved sample email">Email</a>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {sampleContacts.length > 8 && (
+              <button className="text-button" type="button" onClick={() => setSampleContactsExpanded(!sampleContactsExpanded)}>
+                {sampleContactsExpanded ? "Show fewer contacts" : `Show all ${sampleContacts.length} contacts`}
+              </button>
+            )}
+          </>
         )}
       </section>
       <div className="network-stats">
@@ -2673,7 +2968,7 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
         </div>
         <div className="warm-card-footer">
           <em>Draft aligned with 2024 syndicate memo</em>
-          <button className="primary" onClick={() => setDraftOpen(true)}>
+          <button className="primary" onClick={() => prepareContactDraft({ name: "Ananya Sen", expertise: "specialty fluoro-polymer capex cycle" }, "the specialty fluoro-polymer capex cycle")}>
             ☷ Draft Note
           </button>
         </div>
@@ -2686,7 +2981,7 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
             aria-modal="true"
             aria-labelledby="draft-title"
           >
-            <h2 id="draft-title">Draft message to Ananya</h2>
+            <h2 id="draft-title">Draft message to {draftRecipient.name}</h2>
             <p>
               Review and edit before sharing. FINN does not send it for you.
             </p>
@@ -2737,6 +3032,18 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
                 }
               >
                 WhatsApp
+              </button>
+              <button
+                className="secondary"
+                onClick={() => {
+                  if (!draftRecipient.email) {
+                    setNotice("No email address is available for this contact.");
+                    return;
+                  }
+                  window.location.href = `mailto:${encodeURIComponent(draftRecipient.email)}?subject=${encodeURIComponent("A question from FINN")}&body=${encodeURIComponent(draftText)}`;
+                }}
+              >
+                Open email draft
               </button>
               <button
                 className="text-button"
@@ -3099,10 +3406,79 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
   );
 }
 
-function DetailedProfile({ setActive }) {
+function AccountPanel({ authSession, setAuthSession, phoneContacts, setPhoneContacts }) {
+  const [mode, setMode] = useState("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!accountAuthConfigured) {
+      setMessage("Add the Supabase URL and publishable key to enable accounts.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      if (mode === "sign-up") {
+        const result = await signUpWithEmail(email, password);
+        if (result.access_token) {
+          saveAccountSession(result);
+          setAuthSession(result);
+          setMessage("Account created and signed in.");
+        } else {
+          setMessage("Check your email to confirm the account, then sign in here.");
+        }
+      } else {
+        const session = await signInWithEmail(email, password);
+        saveAccountSession(session);
+        setAuthSession(session);
+        setMessage("Signed in. Your selected contacts will sync to this account.");
+      }
+      setPassword("");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const signOut = async () => {
+    await signOutAccount(authSession);
+    setAuthSession(null);
+    setMessage("Signed out. Contacts remain in this tab until it closes.");
+  };
+  const emailAddress = authSession?.user?.email || authSession?.email;
+  return (
+    <section className="profile-section account-panel">
+      <div className="section-title"><span>Account &amp; contact sync</span></div>
+      {authSession ? (
+        <div className="account-signed-in">
+          <div><strong>{emailAddress}</strong><small>{phoneContacts.length} selected contacts available in this workspace</small></div>
+          <button className="secondary" type="button" onClick={signOut}>Sign out</button>
+        </div>
+      ) : (
+        <form onSubmit={submit}>
+          <p>Create an account to keep contacts you choose across visits and devices. Without an account, contacts stay in this browser tab.</p>
+          <label>Email<input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+          <label>Password<input type="password" autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={8} required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+          <div className="account-actions">
+            <button className="primary" disabled={busy} type="submit">{busy ? "Please wait…" : mode === "sign-up" ? "Create account" : "Sign in"}</button>
+            <button className="text-button" type="button" onClick={() => setMode(mode === "sign-up" ? "sign-in" : "sign-up")}>{mode === "sign-up" ? "I already have an account" : "Create an account"}</button>
+          </div>
+        </form>
+      )}
+      {message && <p className="account-message" role="status">{message}</p>}
+      {!accountAuthConfigured && <small className="muted">Configure VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY locally and in Vercel to turn on sign-in.</small>}
+    </section>
+  );
+}
+
+function DetailedProfile({ setActive, authSession, setAuthSession, phoneContacts, setPhoneContacts }) {
   return (
     <main className="content figma-screen profile-detail">
-      <div className="figma-notice">SAMPLE DATA · CONNECTED PREVIEW</div>
+      <div className="figma-notice">PROFILE · ACCOUNT &amp; CONTACT SYNC</div>
+      <AccountPanel authSession={authSession} setAuthSession={setAuthSession} phoneContacts={phoneContacts} setPhoneContacts={setPhoneContacts} />
       <div className="profile-principal">
         <div className="profile-photo">AS</div>
         <div>
@@ -3185,7 +3561,7 @@ function DetailedAsk({ setActive, selectedTicker }) {
   };
   const [companyResearch, setCompanyResearch] = useState(null);
   const [query, setQuery] = useState(
-    `Research ${selectedCompany.name}: summarize operating performance, cash quality, risks, and relevant network context.`,
+    `Research ${selectedCompany.name} using only supplied filings, annual reports, and earnings-call transcripts. Compare the latest quarter with the prior quarter (QoQ) and the same quarter last year (YoY) for Revenue, EBITDA, PBT, and PAT. Also cover business segments and revenue mix, multi-year trajectory, balance sheet and working-capital cycle, cash flow/FCF/cash conversion, management narrative versus reported numbers, explicitly stated guidance, and a concise bull case versus bear case. Mark every unavailable metric and cite only supplied primary sources.`,
   );
   const [status, setStatus] = useState("idle");
   const [answer, setAnswer] = useState("");
@@ -3199,7 +3575,7 @@ function DetailedAsk({ setActive, selectedTicker }) {
     return () => { cancelled = true; };
   }, [selectedTicker]);
   useEffect(() => {
-    setQuery(`Research ${selectedCompany.name}: summarize operating performance, cash quality, risks, and relevant network context.`);
+    setQuery(`Research ${selectedCompany.name} using only supplied filings, annual reports, and earnings-call transcripts. Compare the latest quarter with the prior quarter (QoQ) and the same quarter last year (YoY) for Revenue, EBITDA, PBT, and PAT. Also cover business segments and revenue mix, multi-year trajectory, balance sheet and working-capital cycle, cash flow/FCF/cash conversion, management narrative versus reported numbers, explicitly stated guidance, and a concise bull case versus bear case. Mark every unavailable metric and cite only supplied primary sources.`);
     setAnswer("");
     setStatus("idle");
   }, [selectedTicker]);
@@ -3214,14 +3590,22 @@ function DetailedAsk({ setActive, selectedTicker }) {
           query,
           ticker: canonicalTicker(selectedTicker),
           company: {
-            ...selectedCompany,
+            name: selectedCompany.name,
+            sector: selectedCompany.sector,
             liveFundamentals: companyResearch,
             networkContext: people.filter((person) =>
               JSON.stringify(person).toLowerCase().includes(canonicalTicker(selectedTicker).toLowerCase()),
             ),
           },
-          context: askContext.filter((item) => canonicalTicker(item.ticker) === canonicalTicker(selectedTicker)),
-          network: people,
+          context: [],
+          network: [
+            ...people,
+            ...getStoredSampleNetworkContacts().filter((person) => {
+              const searchContext = `${selectedCompany.name} ${selectedCompany.sector} ${canonicalTicker(selectedTicker)}`.toLowerCase();
+              return `${person.company} ${person.sector} ${person.expertise}`.toLowerCase()
+                .split(/[^a-z0-9&]+/).some((word) => word.length > 4 && searchContext.includes(word));
+            }).slice(0, 12),
+          ],
         }),
       });
       const data = await response.json();
@@ -3235,7 +3619,7 @@ function DetailedAsk({ setActive, selectedTicker }) {
   };
   return (
     <main className="content figma-screen ask-detail">
-      <div className="figma-notice">SAMPLE AI · CONNECTED PREVIEW</div>
+      <div className="figma-notice">FINN · COMPANY RESEARCH</div>
       {status === "idle" && (
         <>
           <h1>
@@ -3450,9 +3834,44 @@ function App() {
   const [active, setActive] = useState("push");
   const [selectedTicker, setSelectedTicker] = useState("TRENT");
   const [dark, setDark] = useState(true);
-  const [phoneContacts, setPhoneContacts] = useState([]);
+  const [phoneContacts, setPhoneContacts] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem("finn-phone-contacts") || "[]"); }
+    catch { return []; }
+  });
+  const [authSession, setAuthSession] = useState(() => readAccountSession());
   const [remoteTickerDirectory, setRemoteTickerDirectory] = useState([]);
   const [booting, setBooting] = useState(true);
+  useEffect(() => {
+    sessionStorage.setItem("finn-phone-contacts", JSON.stringify(phoneContacts));
+  }, [phoneContacts]);
+  useEffect(() => {
+    const userId = authSession?.user?.id;
+    if (!userId) return;
+    let cancelled = false;
+    refreshAccountSession(authSession)
+      .then(async (session) => {
+        if (!session) throw new Error("Session expired");
+        if (cancelled) return;
+        saveAccountSession(session);
+        setAuthSession(session);
+        const savedContacts = await loadAccountContacts(session);
+        if (cancelled) return;
+        setPhoneContacts((current) => [...new Map(
+          [...savedContacts, ...current].map((person) => [`${person.name}-${person.tel}-${person.email}`, person]),
+        ).values()]);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          saveAccountSession(null);
+          setAuthSession(null);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [authSession?.user?.id]);
+  useEffect(() => {
+    if (authSession?.access_token && phoneContacts.length)
+      syncAccountContacts(authSession, phoneContacts).catch(() => {});
+  }, [authSession?.access_token, phoneContacts]);
   useEffect(() => {
     let cancelled = false;
     fetch("/api/tickers")
@@ -3489,6 +3908,7 @@ function App() {
         setActive={setActive}
         phoneContacts={phoneContacts}
         setPhoneContacts={setPhoneContacts}
+        authSession={authSession}
       />
     ) : active === "portfolio" ? (
       <DetailedPortfolio
@@ -3496,7 +3916,13 @@ function App() {
         setSelectedTicker={setSelectedTicker}
       />
     ) : active === "profile" ? (
-      <DetailedProfile setActive={setActive} />
+      <DetailedProfile
+        setActive={setActive}
+        authSession={authSession}
+        setAuthSession={setAuthSession}
+        phoneContacts={phoneContacts}
+        setPhoneContacts={setPhoneContacts}
+      />
     ) : active === "export" ? (
       <ExportPreview setActive={setActive} />
     ) : (

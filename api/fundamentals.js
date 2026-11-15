@@ -1,6 +1,6 @@
 const cache = new Map();
 const TTL_MS = 15 * 60 * 1000;
-const ALLOWED = /^[A-Z0-9.-]{1,20}$/;
+const ALLOWED = /^[A-Z0-9.&-]{1,20}$/;
 
 function clean(value = "") {
   return value
@@ -34,6 +34,30 @@ function parseTable(html, id) {
         : null;
     })
     .filter(Boolean);
+}
+
+function parsePeriods(html, id) {
+  const section = html.match(
+    new RegExp(`<section[^>]+id=["']${id}["'][\\s\\S]*?<table[\\s\\S]*?<thead>([\\s\\S]*?)<\\/thead>`, "i"),
+  )?.[1];
+  if (!section) return [];
+  const row = section.match(/<tr\b[^>]*>([\s\S]*?)<\/tr>/i)?.[1] || section;
+  return [...row.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)]
+    .map(([, cell]) => clean(cell))
+    .filter(Boolean)
+    .slice(1);
+}
+
+function percentChange(current, previous) {
+  const parse = (value) => {
+    const normalized = String(value || "").replace(/,/g, "").replace(/[₹%]/g, "").trim();
+    const match = normalized.match(/^-?\d+(?:\.\d+)?/);
+    return match ? Number(match[0]) : null;
+  };
+  const now = parse(current);
+  const before = parse(previous);
+  if (now == null || before == null || before === 0) return null;
+  return `${((now - before) / Math.abs(before) * 100).toFixed(1)}%`;
 }
 
 function findMetric(html, label) {
@@ -77,6 +101,33 @@ export default async function handler(req, res) {
     const html = await response.text();
     if (!/<section[^>]+id=["']profit-loss["']/i.test(html))
       throw new Error("Company page was not available in the expected format.");
+    const profitLoss = parseTable(html, "profit-loss");
+    const quarterlyResults = parseTable(html, "quarters");
+    const quarterlyPeriods = parsePeriods(html, "quarters");
+    const quarterlyRow = (pattern) => quarterlyResults.find((row) => pattern.test(row.label));
+    const headlineRow = (label, pattern) => {
+      const row = quarterlyRow(pattern);
+      if (!row) return null;
+      const values = row.values;
+      return {
+        label,
+        period: quarterlyPeriods.at(-1) || null,
+        current: values.at(-1) || null,
+        previousQuarter: values.at(-2) || null,
+        sameQuarterLastYear: values.length >= 5 ? values.at(-5) : null,
+        qoq: percentChange(values.at(-1), values.at(-2)),
+        yoy: values.length >= 5 ? percentChange(values.at(-1), values.at(-5)) : null,
+      };
+    };
+    const metric = (label, matcher) => {
+      const row = profitLoss.find((item) => matcher.test(item.label));
+      return row ? { label, value: row.values.at(-1) || null } : null;
+    };
+    const keyMetrics = [
+      metric("Revenue", /^(sales|revenue)$/i),
+      metric("Operating profit", /^(operating profit|ebitda)$/i),
+      metric("Net profit", /^(net profit|profit after tax)$/i),
+    ].filter(Boolean);
     const payload = {
       ticker,
       name: clean(
@@ -85,10 +136,20 @@ export default async function handler(req, res) {
       marketCap: findMetric(html, "Market Cap"),
       currentPrice: findMetric(html, "Current Price"),
       stockPE: findMetric(html, "Stock P\/E"),
+      keyMetrics,
+      quarterlyHeadline: [
+        headlineRow("Revenue", /^(sales|revenue)$/i),
+        headlineRow("EBITDA", /^(operating profit|ebitda)$/i),
+        headlineRow("PBT", /^(profit before tax|pbt)$/i),
+        headlineRow("PAT", /^(net profit|profit after tax)$/i),
+      ].filter(Boolean),
       tables: {
-        profitLoss: parseTable(html, "profit-loss"),
+        quarterlyPeriods,
+        quarterlyResults,
+        profitLoss,
         balanceSheet: parseTable(html, "balance-sheet"),
         cashFlow: parseTable(html, "cash-flow"),
+        ratios: parseTable(html, "ratios"),
       },
       source: "Screener.in",
       sourceUrl,

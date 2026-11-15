@@ -19,9 +19,30 @@ The app can run without a database: ticker suggestions use the bundled local dir
 
 The client never receives the Supabase secret. The two tables have row-level security enabled and no public access policies; API routes use the secret key from the server environment.
 
+## Optional account and contact sync
+
+The app includes email sign-up/sign-in using Supabase Auth. To enable it:
+
+1. In Supabase **Authentication → Providers**, enable Email. Configure the site URL and allowed redirect URLs for local development and your Vercel domain.
+2. Copy the Project URL and publishable key and add them to local `.env` and Vercel's Environment Variables:
+
+   ```env
+   VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+   VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+   ```
+
+3. Run the updated `db/schema.sql` in SQL Editor. The `user_contacts` table has row-level security so signed-in users can read and add only their own contacts.
+4. Redeploy after setting the variables. Signed-out contacts stay in that browser tab; signing in syncs selected contacts to the account.
+
+The publishable key is intended for browser use and must be paired with the table's row-level security policies. Keep `SUPABASE_SECRET_KEY` server-only; never put it in a `VITE_` variable.
+
 ## What is stored
 
 - `companies`: ticker, company name and sector for autocomplete.
 - `exchange_announcements`: dated filing payloads so a later request can use saved filings when exchange servers are unavailable.
 
-Portfolio holdings and phone contacts are still kept in the browser for this demo. They are not uploaded to Supabase.
+- Portfolio holdings remain in the browser for this demo.
+- Phone contacts stay in the current browser tab until sign-in. Signed-in users' selected contacts are also synced to their private Supabase account table.
+- `sample_network_contacts`: 120 clearly labelled, fictional network profiles with reserved `example.com` email addresses for demo outreach. The Network page reads the seeded table; its API supplies the same fictional demo set if the database has not been connected.
+
+Push alert preferences are stored in the browser. While Push is open, announcements are checked on the existing one-minute refresh and Yahoo Finance completed daily bars are checked every five minutes. Browser notifications require permission. Alerts while the site is closed need a separate Web Push subscription and scheduled server job; they are not part of this demo behavior.

@@ -2969,6 +2969,52 @@ body {
   color: var(--muted);
   text-align: right;
 }
+.sample-contact-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.sample-contact-toolbar > div,
+.sample-contact-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.sample-contact-toolbar > div > strong { font-size: 12px; }
+.sample-contact-toolbar small,
+.sample-contact-status { color: var(--muted); font-size: 10px; }
+.sample-contact-toolbar button { flex: 0 0 auto; font-size: 10px; }
+.sample-contact-status { margin: 9px 0 3px !important; }
+.sample-contact-list {
+  display: grid;
+  padding: 0;
+  margin: 5px 0;
+  list-style: none;
+}
+.sample-contact-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.sample-contact-copy { flex: 1; }
+.sample-contact-copy strong { font-size: 12px; }
+.sample-contact-copy span,
+.sample-contact-copy small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.sample-contact-copy .sample-contact-bio { color: var(--text); }
+.sample-contact-actions { display: flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+.sample-contact-actions .text-button { padding: 5px; font-size: 10px; text-decoration: none; }
+.app.light .sample-contact-list li { border-color: rgba(60, 60, 67, 0.14); }
+@media (max-width: 440px) {
+  .sample-contact-list li { align-items: flex-start; flex-direction: column; }
+  .sample-contact-actions { align-self: flex-end; }
+}
 .expert-dialog {
   width: min(100%, 500px);
   max-height: min(84vh, 720px);
@@ -3977,18 +4023,14 @@ body {
   z-index: 3;
 }
 .ticker-suggestions {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  z-index: 8;
+  position: relative;
+  z-index: 1;
+  margin-top: 7px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--glass-card);
+  background: #202127;
   box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
 }
 .ticker-suggestions button {
   display: flex;
@@ -4014,7 +4056,107 @@ body {
   font: 10px "DM Mono", monospace;
 }
 .pull-single-action { display: block; }
+.pull-single-action { margin: 14px 0 20px; }
 .pull-single-action button { width: 100%; }
+.app.light .ticker-suggestions { background: #fff; }
+
+/* Keep the fixed navigation calm and legible over scrolling content. */
+.app .bottom-nav {
+  background: rgba(22, 23, 27, 0.97);
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+.app.light .bottom-nav {
+  background: rgba(250, 251, 254, 0.97);
+  box-shadow: 0 -8px 28px rgba(37, 49, 73, 0.08);
+}
+.app.light .research-search input {
+  background: transparent !important;
+  color: #1c1c1e !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+.app.light .research-search {
+  background: rgba(236, 239, 246, 0.96);
+}
+.push-feed-filters { display: flex; align-items: center; gap: 8px; }
+.routine-toggle {
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--surface-2);
+  font-size: 10px;
+  cursor: pointer;
+}
+.routine-toggle.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.push-alert-rules {
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--glass-card);
+}
+.push-alert-rules summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+  list-style: none;
+}
+.push-alert-rules summary::-webkit-details-marker { display: none; }
+.push-alert-rules summary span { margin-left: auto; color: var(--green, #32c85e); }
+.push-alert-settings { display: grid; gap: 10px; padding: 0 12px 12px; }
+.alert-enable-row,
+.alert-category-grid label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: 10px;
+}
+.alert-thresholds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.alert-thresholds label { display: grid; gap: 5px; color: var(--muted); font-size: 9px; }
+.alert-thresholds input {
+  min-width: 0;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-2);
+}
+.alert-category-label { color: var(--muted); font-size: 9px; }
+.alert-category-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 5px; }
+.alert-category-grid input,
+.alert-enable-row input { accent-color: var(--accent); }
+.push-alert-settings > small,
+.push-alert-status { color: var(--muted); font-size: 9px; line-height: 1.5; }
+.push-alert-status { margin: 0 0 10px; }
+.app.light .push-alert-rules { background: rgba(255, 255, 255, 0.94); }
+.app.light .routine-toggle { background: #fff; }
+.quarterly-metrics {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--glass-card);
+}
+.quarterly-metrics .section-title { margin-bottom: 9px; font-size: 11px; }
+.quarterly-metrics .section-title small { color: var(--muted); font-size: 9px; }
+.quarterly-metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-bottom: 8px; }
+.quarterly-metric-grid article { display: grid; gap: 5px; padding: 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.quarterly-metric-grid article span { color: var(--muted); font-size: 9px; }
+.quarterly-metric-grid article strong { color: var(--text); font-size: 14px; }
+.quarterly-metric-grid article small { color: var(--muted); font-size: 9px; line-height: 1.35; }
+.quarterly-metrics > small { display: block; font-size: 9px; line-height: 1.5; }
 
 .launch-splash {
   position: fixed;
