@@ -77,17 +77,25 @@ const priorityCategories = new Set([
   "capex", "credit_rating", "insider_trading", "pledging",
 ]);
 const initialAlertPreferences = {
+  thresholdDefaultsVersion: 2,
   enabled: true,
   marketMoves: true,
-  priceMovePct: 3,
-  volumeMultiple: 2,
+  priceMovePct: 0.5,
+  volumeMultiple: 1,
   categories: ["results", "M&A", "management_change", "fund_raise", "litigation", "capex"],
 };
 
 function readAlertPreferences() {
   try {
     const saved = JSON.parse(localStorage.getItem("finn-push-alert-preferences") || "null");
-    return saved ? { ...initialAlertPreferences, ...saved } : initialAlertPreferences;
+    if (!saved) return initialAlertPreferences;
+    const preferences = { ...initialAlertPreferences, ...saved };
+    if (saved.thresholdDefaultsVersion !== initialAlertPreferences.thresholdDefaultsVersion) {
+      if (Number(saved.priceMovePct) === 3) preferences.priceMovePct = initialAlertPreferences.priceMovePct;
+      if (Number(saved.volumeMultiple) === 2) preferences.volumeMultiple = initialAlertPreferences.volumeMultiple;
+    }
+    preferences.thresholdDefaultsVersion = initialAlertPreferences.thresholdDefaultsVersion;
+    return preferences;
   } catch { return initialAlertPreferences; }
 }
 
@@ -1642,11 +1650,12 @@ function DetailedPush({ setActive, setSelectedTicker, setSelectedFilingContext, 
   const [sortOrder, setSortOrder] = useState("newest");
   const [showRoutine, setShowRoutine] = useState(true);
   const [alertPreferences, setAlertPreferences] = useState(readAlertPreferences);
+  const [priceMoveDraft, setPriceMoveDraft] = useState(() => String(alertPreferences.priceMovePct));
+  const [volumeMultipleDraft, setVolumeMultipleDraft] = useState(() => String(alertPreferences.volumeMultiple));
   const [alertSettingsOpen, setAlertSettingsOpen] = useState(false);
   const [alertStatus, setAlertStatus] = useState("");
   const [marketWatch, setMarketWatch] = useState([]);
   const initialAnnouncementScan = useRef(false);
-  const initialMarketScan = useRef(false);
   const seenAlertIds = useRef(null);
   const [expandedCompanies, setExpandedCompanies] = useState(false);
   const [expandedCompany, setExpandedCompany] = useState(null);
@@ -1752,6 +1761,20 @@ function DetailedPush({ setActive, setSelectedTicker, setSelectedFilingContext, 
   );
   const holdingsSymbols = savedHoldings.map((holding) => canonicalTicker(holding.symbol)).filter(Boolean);
   const holdingsKey = holdingsSymbols.join(",");
+  const commitAlertThreshold = (field, draft, minimum, maximum, setDraft) => {
+    if (!draft.trim()) {
+      setDraft(String(alertPreferences[field]));
+      return;
+    }
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(alertPreferences[field]));
+      return;
+    }
+    const value = Math.min(maximum, Math.max(minimum, parsed));
+    setAlertPreferences((current) => ({ ...current, [field]: value }));
+    setDraft(String(value));
+  };
   useEffect(() => {
     localStorage.setItem("finn-push-alert-preferences", JSON.stringify(alertPreferences));
   }, [alertPreferences]);
@@ -1781,7 +1804,7 @@ function DetailedPush({ setActive, setSelectedTicker, setSelectedFilingContext, 
     const fire = (title, body, key) => {
       try {
         if (typeof Notification !== "undefined" && Notification.permission === "granted") new Notification(title, { body, tag: key });
-        else setAlertStatus(`${title}: ${body} (Enable browser notifications in Alert rules.)`);
+        else setAlertStatus(`${title}: ${body} (Enable browser notifications in Filter rules.)`);
       } catch {
         setAlertStatus(`${title}: ${body}`);
       }
@@ -1816,12 +1839,10 @@ function DetailedPush({ setActive, setSelectedTicker, setSelectedFilingContext, 
     if (!alertPreferences.enabled || !alertPreferences.marketMoves) return;
     if (!marketWatch.length) return;
     let seen;
-    try { seen = new Set(JSON.parse(localStorage.getItem("finn-seen-market-alerts") || "[]")); }
+    try { seen = new Set(JSON.parse(localStorage.getItem("finn-seen-market-alerts-v2") || "[]")); }
     catch { seen = new Set(); }
     const dateTag = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
     const nextSeen = new Set(seen);
-    const firstScan = !initialMarketScan.current;
-    initialMarketScan.current = true;
     for (const quote of marketWatch) {
       const symbol = canonicalTicker(quote.symbol || "");
       const movement = Math.abs(Number(quote.changePct));
@@ -1832,7 +1853,6 @@ function DetailedPush({ setActive, setSelectedTicker, setSelectedFilingContext, 
         const key = `${symbol}-${dateTag}-${condition}`;
         if (nextSeen.has(key)) continue;
         nextSeen.add(key);
-        if (firstScan) continue;
         const company = savedHoldings.find((holding) => canonicalTicker(holding.symbol) === symbol)?.name || symbol;
         const body = condition === "price"
           ? `${quote.changePct > 0 ? "+" : ""}${Number(quote.changePct).toFixed(2)}% daily move crossed your ±${alertPreferences.priceMovePct}% rule.`
@@ -1842,7 +1862,7 @@ function DetailedPush({ setActive, setSelectedTicker, setSelectedFilingContext, 
         } else setAlertStatus(`${company}: ${body}`);
       }
     }
-    try { localStorage.setItem("finn-seen-market-alerts", JSON.stringify([...nextSeen].slice(-500))); } catch {}
+    try { localStorage.setItem("finn-seen-market-alerts-v2", JSON.stringify([...nextSeen].slice(-500))); } catch {}
   }, [marketWatch, alertPreferences, holdingsKey]);
   const belongsToPortfolio = (item) => {
     const ticker = canonicalTicker(item.ticker || "");
@@ -2052,12 +2072,12 @@ function DetailedPush({ setActive, setSelectedTicker, setSelectedFilingContext, 
         </button>
       </div>
       <details className="push-alert-rules" open={alertSettingsOpen} onToggle={(event) => setAlertSettingsOpen(event.currentTarget.open)}>
-        <summary><Bell size={13} /> Alert rules <span>{alertPreferences.enabled ? "On" : "Paused"}</span></summary>
+        <summary><Bell size={13} /> Filter rules <span>{alertPreferences.enabled ? "Alerts On" : "Alerts Off"}</span></summary>
         <div className="push-alert-settings">
           <label className="alert-enable-row"><input type="checkbox" checked={alertPreferences.enabled} onChange={(event) => setAlertPreferences((current) => ({ ...current, enabled: event.target.checked }))} /> Watch my portfolio</label>
           <div className="alert-thresholds">
-            <label>Daily price move (%)<input type="number" min="0.5" max="50" step="0.5" value={alertPreferences.priceMovePct} onChange={(event) => setAlertPreferences((current) => ({ ...current, priceMovePct: Math.max(0.5, Number(event.target.value) || 0.5) }))} /></label>
-            <label>Volume vs. average (×)<input type="number" min="1" max="20" step="0.5" value={alertPreferences.volumeMultiple} onChange={(event) => setAlertPreferences((current) => ({ ...current, volumeMultiple: Math.max(1, Number(event.target.value) || 1) }))} /></label>
+            <label>Daily price move (%)<input type="text" inputMode="decimal" value={priceMoveDraft} onChange={(event) => setPriceMoveDraft(event.target.value)} onBlur={() => commitAlertThreshold("priceMovePct", priceMoveDraft, 0.5, 50, setPriceMoveDraft)} /></label>
+            <label>Volume vs. average (×)<input type="text" inputMode="decimal" value={volumeMultipleDraft} onChange={(event) => setVolumeMultipleDraft(event.target.value)} onBlur={() => commitAlertThreshold("volumeMultiple", volumeMultipleDraft, 1, 20, setVolumeMultipleDraft)} /></label>
           </div>
           <label className="alert-enable-row"><input type="checkbox" checked={alertPreferences.marketMoves} onChange={(event) => setAlertPreferences((current) => ({ ...current, marketMoves: event.target.checked }))} /> Alert on Yahoo Finance daily moves and volume</label>
           <span className="alert-category-label">Alert me about filings in</span>
@@ -2071,6 +2091,18 @@ function DetailedPush({ setActive, setSelectedTicker, setSelectedFilingContext, 
             const permission = await Notification.requestPermission();
             setAlertStatus(permission === "granted" ? "Browser notifications enabled." : "Notifications were not enabled; alerts will appear in this page while it is open.");
           }}>Enable browser notifications</button>
+          <button className="text-button" type="button" onClick={async () => {
+            const title = "FINN · Test alert";
+            const body = "Alerts are working while this page is open.";
+            try {
+              if (typeof Notification !== "undefined") {
+                let permission = Notification.permission;
+                if (permission === "default") permission = await Notification.requestPermission();
+                if (permission === "granted") new Notification(title, { body, tag: "finn-test-alert" });
+              }
+            } catch {}
+            setAlertStatus("Test alert: Alerts are working while this page is open. If browser notifications are unavailable, this message confirms the in-app alert path.");
+          }}>Send test alert</button>
           <small>Price and volume checks use Yahoo Finance daily bars and refresh every five minutes while this page is open. For alerts when the app is closed, a server push service is still required.</small>
         </div>
       </details>
@@ -4092,11 +4124,11 @@ function App() {
           profileInitials={profileInitials}
         />
         {view}
-        <BottomNav
-          active={active === "ask-answer" ? "ask" : active}
-          setActive={setActive}
-        />
       </div>
+      <BottomNav
+        active={active === "ask-answer" ? "ask" : active}
+        setActive={setActive}
+      />
     </div>
   );
 }
