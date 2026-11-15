@@ -1,3 +1,11 @@
+import { DOMMatrix, ImageData, Path2D } from "@napi-rs/canvas";
+
+// pdf.js expects browser geometry globals in Node. Its automatic canvas
+// detection can be missed by serverless bundlers, so initialize them directly.
+globalThis.DOMMatrix ??= DOMMatrix;
+globalThis.ImageData ??= ImageData;
+globalThis.Path2D ??= Path2D;
+
 const MAX_PDF_BYTES = 12 * 1024 * 1024;
 const MAX_TEXT_CHARS = 42_000;
 const briefCache = new Map();
