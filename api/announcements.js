@@ -1,3 +1,5 @@
+import { cacheAnnouncements, readCachedAnnouncements } from "./db.js";
+
 const NSE_RSS =
   "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml";
 const BSE_RSS = "https://www.bseindia.com/data/xml/announcements.aspx";
@@ -297,6 +299,24 @@ const requestHeaders = {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 };
 
+async function fetchBseSessionCookie(pageUrl) {
+  try {
+    const landing = await fetch(pageUrl, {
+      headers: {
+        ...requestHeaders,
+        accept: "text/html,application/xhtml+xml",
+        referer: "https://www.bseindia.com/",
+      },
+      signal: AbortSignal.timeout(8_000),
+    });
+    const cookies = landing.headers.getSetCookie?.() ||
+      (landing.headers.get("set-cookie") || "").split(/,\s*(?=[^;,]+=)/);
+    return cookies.map((item) => item.split(";")[0]).filter(Boolean).join("; ");
+  } catch {
+    return "";
+  }
+}
+
 async function fetchNseDated(from, to) {
   const landing = await fetch(NSE_FILINGS_PAGE, {
     headers: {
@@ -363,6 +383,7 @@ async function fetchBseDated(from, to) {
     strScrip: "",
     strType: "C",
   };
+  const cookie = await fetchBseSessionCookie("https://www.bseindia.com/corporates/ann.html");
   const fetchPage = async (page) => {
     const pageUrl = new URL(url);
     for (const [key, value] of Object.entries({ ...query, pageno: page }))
@@ -371,6 +392,7 @@ async function fetchBseDated(from, to) {
       headers: {
         ...requestHeaders,
         referer: "https://www.bseindia.com/corporates/ann.html",
+        ...(cookie ? { cookie } : {}),
       },
       signal: AbortSignal.timeout(12_000),
     });
@@ -441,28 +463,7 @@ async function fetchBse() {
   let lastError;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      let cookie = "";
-      try {
-        const landing = await fetch("https://www.bseindia.com/", {
-          headers: {
-            ...requestHeaders,
-            accept: "text/html,application/xhtml+xml",
-            referer: "https://www.bseindia.com/rss-feed",
-          },
-          signal: AbortSignal.timeout(8_000),
-        });
-        const landingCookies =
-          landing.headers.getSetCookie?.() ||
-          (landing.headers.get("set-cookie") || "").split(
-            /,\s*(?=[^;,]+=)/,
-          );
-        cookie = landingCookies
-          .map((item) => item.split(";")[0])
-          .filter(Boolean)
-          .join("; ");
-      } catch {
-        // Still attempt the public RSS URL if BSE's landing page is unavailable.
-      }
+      const cookie = await fetchBseSessionCookie("https://www.bseindia.com/rss-feed");
       const response = await fetch(
         process.env.BSE_ANNOUNCEMENTS_RSS_URL || BSE_RSS,
         {
@@ -604,12 +605,29 @@ export default async function handler(req, res) {
     let entry = cache.get(key);
     if (req.query?.refresh === "true") cache.delete(key);
     entry = cache.get(key);
+    if (!entry && req.query?.refresh !== "true") {
+      const saved = await readCachedAnnouncements(formatDate(from), formatDate(to)).catch(() => null);
+      if (saved?.data?.length && Date.now() - saved.updatedAt < 120_000) {
+        const rows = includeUnclassified
+          ? saved.data
+          : saved.data.filter((row) => row.category !== "unclassified");
+        return res.status(200).json({
+          source: ["Saved filings"],
+          range: { from: formatDate(from), to: formatDate(to) },
+          fetchedAt: new Date(saved.updatedAt).toISOString(),
+          cacheSeconds: 120,
+          total: rows.length,
+          data: rows,
+        });
+      }
+    }
     if (!entry || Date.now() > entry.expiresAt) {
       entry = {
         result: await loadAnnouncements(from, to),
         expiresAt: Date.now() + CACHE_MS,
       };
       cache.set(key, entry);
+      await cacheAnnouncements(entry.result.data).catch(() => false);
     }
     const rows = includeUnclassified
       ? entry.result.data
@@ -627,9 +645,30 @@ export default async function handler(req, res) {
       data: rows,
     });
   } catch (error) {
+    const today = new Date(Date.now() + 330 * 60_000);
+    const todayIso = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}-${String(today.getUTCDate()).padStart(2, "0")}`;
+    const from = dateParts(req.query?.from) || dateParts(todayIso);
+    const to = dateParts(req.query?.to) || dateParts(todayIso);
+    if (from && to) {
+      try {
+        const cached = await readCachedAnnouncements(formatDate(from), formatDate(to));
+        const cachedRows = cached.data || [];
+        const rows = includeUnclassified ? cachedRows : cachedRows.filter((row) => row.category !== "unclassified");
+        if (rows.length)
+          return res.status(200).json({
+            source: ["Saved filings"],
+            range: { from: formatDate(from), to: formatDate(to) },
+            fetchedAt: new Date().toISOString(),
+            cacheSeconds: 300,
+            total: rows.length,
+            data: rows,
+          });
+      } catch {
+        // The UI receives the ordinary empty-feed state if no saved feed exists.
+      }
+    }
     return res.status(502).json({
       error: "Exchange announcements unavailable",
-      detail: error.message,
       data: [],
     });
   }

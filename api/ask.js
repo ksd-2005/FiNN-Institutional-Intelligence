@@ -1,9 +1,9 @@
 export default async function handler(req, res) {
   if (req.method !== "POST")
     return res.status(405).json({ error: "POST only" });
-  const { query, context = [], network = [] } = req.body || {};
+  const { query, ticker = "", company = {}, context = [], network = [] } = req.body || {};
   if (!query) return res.status(400).json({ error: "query is required" });
-  const prompt = `You are FINN, a financial investment intelligence agent. Answer only from the supplied primary-source context. Use clean Markdown: a short heading, compact paragraphs, bullets, and a comparison table only when it improves clarity. Cite the exact source names supplied in context. Clearly label inference and uncertainty. Do not give a personal buy/sell recommendation without goals, horizon, valuation and risk context.\nCompany context: ${JSON.stringify(context)}\nNetwork context: ${JSON.stringify(network)}\nQuestion: ${query}`;
+  const prompt = `You are FINN, a financial investment intelligence agent. The selected company is ${company.name || ticker || "unspecified"} (${ticker || company.ticker || "ticker unavailable"}). Answer only from the supplied company and primary-source context. Use clean Markdown: a short heading, compact paragraphs, bullets, and a comparison table only when it improves clarity. Cite exact source names and links supplied in context. Clearly distinguish reported figures, inference, missing data, and sample/demo data. Do not substitute another company if evidence for the selected company is missing; say what is unavailable. Do not give a personal buy/sell recommendation without goals, horizon, valuation and risk context.\nSelected-company profile and live fundamentals: ${JSON.stringify(company)}\nTicker-matched research context: ${JSON.stringify(context)}\nNetwork context relevant to this company: ${JSON.stringify(network)}\nQuestion: ${query}`;
   try {
     if (process.env.HYDE_API_KEY) {
       const r = await fetch("https://inference.hyde.tech/v1/chat/completions", {

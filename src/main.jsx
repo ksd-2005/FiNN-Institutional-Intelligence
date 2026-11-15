@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { strToU8, zipSync } from "fflate";
 import {
   ArrowUpRight,
+  ArrowDownUp,
   Bell,
   BookOpen,
   CheckCircle2,
@@ -42,6 +43,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { askContext, companyDetails } from "./data";
+import { tickerDirectory as bundledTickerDirectory } from "./ticker-directory";
 
 const portfolioCompanyMetadata = {
   ORIANA: { name: "Oriana Power Ltd", sector: "Renewable Energy" },
@@ -1561,6 +1563,7 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
   const [announcementRefreshing, setAnnouncementRefreshing] = useState(false);
   const [announcementMeta, setAnnouncementMeta] = useState(null);
   const [portfolioOnly, setPortfolioOnly] = useState(false);
+  const [sortOrder, setSortOrder] = useState("newest");
   const [expandedCompanies, setExpandedCompanies] = useState(false);
   const [expandedCompany, setExpandedCompany] = useState(null);
   const [contactCompany, setContactCompany] = useState(null);
@@ -1787,12 +1790,16 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
       filing.filedAt = item.filedAt;
     }
   }
-  companyGroups.sort((a, b) => b.latestAt - a.latestAt);
+  companyGroups.sort((a, b) =>
+    sortOrder === "newest" ? b.latestAt - a.latestAt : a.latestAt - b.latestAt,
+  );
   for (const group of companyGroups)
-    group.filings.sort((a, b) => b.time - a.time);
+    group.filings.sort((a, b) =>
+      sortOrder === "newest" ? b.time - a.time : a.time - b.time,
+    );
   return (
     <main className="content figma-screen push-detail">
-      <div className="figma-notice">LIVE EXCHANGE FILINGS · NSE + BSE</div>
+      <div className="figma-notice">LIVE EXCHANGE FILINGS · NSE</div>
       <div className="figma-horizon">
         {[
           ["24H", "24H"],
@@ -1820,6 +1827,18 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
           <CircleDot size={10} /> {companyGroups.length} COMPANIES
         </span>
       </div>
+      <div className="feed-sort-row">
+        <span>Sort filings by date</span>
+        <button
+          type="button"
+          className="feed-sort-button"
+          onClick={() => setSortOrder(sortOrder === "newest" ? "oldest" : "newest")}
+          aria-label={`Currently ${sortOrder === "newest" ? "newest" : "oldest"} first. Change sort order`}
+        >
+          <ArrowDownUp size={14} />
+          {sortOrder === "newest" ? "Newest first" : "Oldest first"}
+        </button>
+      </div>
       {range === "CUSTOM" && (
         <div className="custom-date-filter">
           <label>
@@ -1844,7 +1863,7 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
         <div className="section-title">
           <span>Exchange announcements</span>
           <span className="muted">
-            {announcementMeta?.source?.join(" + ") || "Exchange feeds"} ·{" "}
+            NSE ·{" "}
             {selectedDates.from} to {selectedDates.to}
           </span>
           <button
@@ -1862,10 +1881,7 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
           </button>
         </div>
         {announcementError ? (
-          <p className="muted">
-            Live feed unavailable: {announcementError}. Refresh to try the
-            exchange feeds again.
-          </p>
+          <p className="muted">Live exchange feed unavailable. Refresh to try again.</p>
         ) : visibleLiveAnnouncements.length ? (
           <>
             <p className="feed-summary">
@@ -1955,19 +1971,6 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
                   : `Show all ${companyGroups.length} companies`}
               </button>
             )}
-            {announcementMeta?.providerWarnings?.length > 0 && (
-              <p className="feed-warning">
-                An exchange provider is unavailable:{" "}
-                {announcementMeta.providerWarnings.join("; ")}
-              </p>
-            )}
-            {announcementMeta?.providers?.BSE?.partial && (
-              <p className="feed-warning">
-                BSE returned the newest {announcementMeta.providers.BSE.count}{" "}
-                of {announcementMeta.providers.BSE.total} filings in this range.
-                Narrow the dates to see a more complete result set.
-              </p>
-            )}
           </>
         ) : announcementLoaded ? (
           <div className="feed-empty-state">
@@ -1980,19 +1983,6 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
               Dated exchange data is available for recent filing history. RSS
               fallback data, when used, is only a latest-items snapshot.
             </p>
-            {announcementMeta?.providerWarnings?.length > 0 && (
-              <p className="feed-warning">
-                Dated provider status:{" "}
-                {announcementMeta.providerWarnings.join("; ")}
-              </p>
-            )}
-            {announcementMeta?.providers?.BSE?.partial && (
-              <p className="feed-warning">
-                BSE returned {announcementMeta.providers.BSE.count} of{" "}
-                {announcementMeta.providers.BSE.total} filings before its page
-                limit. Narrow the dates to check a smaller result set.
-              </p>
-            )}
             <div className="share-actions">
               {portfolioOnly && (
                 <button
@@ -2041,7 +2031,7 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
             )}
           </div>
         ) : (
-          <p className="muted">Loading NSE RSS and BSE announcements…</p>
+          <p className="muted">Loading NSE filings…</p>
         )}
       </section>
       {contactCompany && (
@@ -2084,9 +2074,12 @@ function DetailedPull({
   selectedTicker,
   setSelectedTicker,
   phoneContacts,
+  remoteTickerDirectory = [],
 }) {
   const [ticker, setTicker] = useState(selectedTicker || "TRENT");
   const [lookupTicker, setLookupTicker] = useState(selectedTicker || "TRENT");
+  const [tickerSuggestionsOpen, setTickerSuggestionsOpen] = useState(false);
+  const [dbTickerSuggestions, setDbTickerSuggestions] = useState([]);
   const [contactDialogOpen, setContactDialogOpen] = useState(false);
   const [draftContact, setDraftContact] = useState(null);
   const [callContact, setCallContact] = useState(null);
@@ -2094,6 +2087,27 @@ function DetailedPull({
   const [fundamentalsError, setFundamentalsError] = useState("");
   const [fundamentalsLoading, setFundamentalsLoading] = useState(false);
   const portfolioHoldings = loadPortfolioHoldings();
+  const tickerDirectory = useMemo(() => {
+    const rows = [...bundledTickerDirectory, ...remoteTickerDirectory, ...dbTickerSuggestions];
+    for (const holding of portfolioHoldings) {
+      const symbol = canonicalTicker(holding.symbol);
+      if (!rows.some((row) => row.ticker === symbol))
+        rows.push({ ticker: symbol, name: holding.name, sector: holding.sector || "Portfolio" });
+    }
+    return [...new Map(rows.map((row) => [row.ticker, row])).values()];
+  }, [remoteTickerDirectory, dbTickerSuggestions, portfolioHoldings.length]);
+  const matchingTickers = useMemo(() => {
+    const query = ticker.trim().toLowerCase();
+    if (!query) return [];
+    return tickerDirectory
+      .filter((row) => row.ticker.toLowerCase().includes(query) || row.name.toLowerCase().includes(query))
+      .sort((a, b) => {
+        const aStarts = a.ticker.toLowerCase().startsWith(query) || a.name.toLowerCase().startsWith(query);
+        const bStarts = b.ticker.toLowerCase().startsWith(query) || b.name.toLowerCase().startsWith(query);
+        return Number(bStarts) - Number(aStarts) || a.name.localeCompare(b.name);
+      })
+      .slice(0, 6);
+  }, [ticker, tickerDirectory]);
   useEffect(() => {
     const nextTicker = canonicalTicker(selectedTicker || "TRENT");
     if (nextTicker !== ticker) {
@@ -2101,6 +2115,20 @@ function DetailedPull({
       setLookupTicker(nextTicker);
     }
   }, [selectedTicker]);
+  useEffect(() => {
+    const query = ticker.trim();
+    if (!query) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`/api/tickers?q=${encodeURIComponent(query)}`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : null)
+        .then((payload) => {
+          if (Array.isArray(payload?.data)) setDbTickerSuggestions(payload.data);
+        })
+        .catch(() => {});
+    }, 180);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [ticker]);
   useEffect(() => {
     let cancelled = false;
     setFundamentalsLoading(true);
@@ -2146,43 +2174,66 @@ function DetailedPull({
   const displayName = liveFundamentals?.name || detail.name;
   const experts = getSampleCompanyExperts(ticker, displayName);
   const selectResearchTicker = (value) => {
-    const nextTicker = canonicalTicker(value.trim());
+    const query = value.trim().toLowerCase();
+    const match = tickerDirectory.find(
+      (row) => row.ticker.toLowerCase() === query || row.name.toLowerCase() === query,
+    ) || matchingTickers[0];
+    const nextTicker = canonicalTicker(match?.ticker || value.trim());
     setTicker(nextTicker);
     setLookupTicker(nextTicker);
     setSelectedTicker(nextTicker);
+    setTickerSuggestionsOpen(false);
   };
   return (
     <main className="content figma-screen pull-detail">
       <div className="figma-notice">SAMPLE DATA · CONNECTED PREVIEW</div>
-      <div className="pull-actions">
-        <button className="primary" onClick={() => setActive("ask")}>
-          <Sparkles size={15} /> Ask FINN
-        </button>
+      <div className="research-search-wrap">
+        <div className="research-search">
+          <Search size={16} />
+          <input
+            value={ticker}
+            aria-label="Search a company by name or ticker"
+            placeholder="Search a company or ticker (e.g. OLA)"
+            onFocus={() => setTickerSuggestionsOpen(true)}
+            onChange={(event) => {
+              setTicker(event.target.value);
+              setTickerSuggestionsOpen(true);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") selectResearchTicker(event.currentTarget.value);
+              if (event.key === "Escape") setTickerSuggestionsOpen(false);
+            }}
+          />
+          <button aria-label="Search company" onClick={() => selectResearchTicker(ticker)}>
+            <Search size={16} />
+          </button>
+        </div>
+        {tickerSuggestionsOpen && matchingTickers.length > 0 && (
+          <div className="ticker-suggestions" role="listbox" aria-label="Company suggestions">
+            {matchingTickers.map((row) => (
+              <button
+                key={row.ticker}
+                type="button"
+                role="option"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => selectResearchTicker(row.ticker)}
+              >
+                <span><strong>{row.name}</strong><small>{row.sector}</small></span>
+                <b>{row.ticker}</b>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="pull-actions pull-single-action">
         <button
-          className="secondary"
+          className="primary"
           onClick={() => {
-            setSelectedTicker(ticker.trim().toUpperCase());
+            selectResearchTicker(ticker);
             setActive("ask");
           }}
         >
-          Research with AI <ArrowUpRight size={15} />
-        </button>
-      </div>
-      <div className="research-search">
-        <Search size={16} />
-        <input
-          value={ticker}
-          onChange={(event) => setTicker(event.target.value.toUpperCase())}
-          onKeyDown={(event) =>
-            event.key === "Enter" &&
-            selectResearchTicker(event.currentTarget.value)
-          }
-        />
-        <button
-          aria-label="Search company"
-          onClick={() => selectResearchTicker(ticker)}
-        >
-          <Search size={16} />
+          <Sparkles size={15} /> Ask FINN about {canonicalTicker(ticker) || "company"}
         </button>
       </div>
       <section
@@ -2437,8 +2488,7 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
   );
   const contactPickerAvailable =
     typeof navigator !== "undefined" &&
-    "contacts" in navigator &&
-    "ContactsManager" in window;
+    "contacts" in navigator;
   const choosePhoneContacts = async () => {
     if (!contactPickerAvailable) return;
     try {
@@ -2537,8 +2587,9 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
         <div>
           <strong>Bring in your contacts</strong>
           <p>
-            Choose individual contacts from a supported Android browser, or
-            import a .vcf file. Contacts stay in this page session.
+            Android Chrome can open the phone contact picker. On iPhone, export
+            selected contacts as a .vcf file and import it here. Only chosen
+            contacts are added to this page session.
           </p>
         </div>
         <div className="phone-contact-actions">
@@ -2546,6 +2597,7 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
             className="secondary"
             onClick={choosePhoneContacts}
             disabled={!contactPickerAvailable}
+            title={contactPickerAvailable ? "Choose selected contacts from your phone" : "Use the vCard import on this browser"}
           >
             Choose from phone
           </button>
@@ -2560,8 +2612,8 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts }) {
         </div>
         {!contactPickerAvailable && (
           <small className="muted">
-            Direct contact picking is not supported in this browser. The .vcf
-            option works across iOS and Android.
+            This browser does not expose the web contact picker. Importing a
+            .vcf file works on iOS and Android browsers.
           </small>
         )}
         {phoneContactStatus && <p role="status">{phoneContactStatus}</p>}
@@ -3122,13 +3174,35 @@ function DetailedProfile({ setActive }) {
 }
 
 function DetailedAsk({ setActive, selectedTicker }) {
-  const selectedCompany =
-    companyDetails[selectedTicker] || companyDetails.TRENT;
+  const selectedRecord = bundledTickerDirectory.find(
+    (row) => row.ticker === canonicalTicker(selectedTicker),
+  );
+  const selectedCompany = companyDetails[canonicalTicker(selectedTicker)] || {
+    name: selectedRecord?.name || `${canonicalTicker(selectedTicker)} Ltd`,
+    sector: selectedRecord?.sector || "Company lookup",
+    metrics: [],
+    sources: [],
+  };
+  const [companyResearch, setCompanyResearch] = useState(null);
   const [query, setQuery] = useState(
     `Research ${selectedCompany.name}: summarize operating performance, cash quality, risks, and relevant network context.`,
   );
   const [status, setStatus] = useState("idle");
   const [answer, setAnswer] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    setCompanyResearch(null);
+    fetch(`/api/fundamentals?ticker=${encodeURIComponent(canonicalTicker(selectedTicker))}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => { if (!cancelled) setCompanyResearch(payload); })
+      .catch(() => { if (!cancelled) setCompanyResearch(null); });
+    return () => { cancelled = true; };
+  }, [selectedTicker]);
+  useEffect(() => {
+    setQuery(`Research ${selectedCompany.name}: summarize operating performance, cash quality, risks, and relevant network context.`);
+    setAnswer("");
+    setStatus("idle");
+  }, [selectedTicker]);
   const submit = async () => {
     if (!query.trim()) return;
     setStatus("loading");
@@ -3138,7 +3212,15 @@ function DetailedAsk({ setActive, selectedTicker }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           query,
-          context: askContext.filter((item) => item.ticker === selectedTicker),
+          ticker: canonicalTicker(selectedTicker),
+          company: {
+            ...selectedCompany,
+            liveFundamentals: companyResearch,
+            networkContext: people.filter((person) =>
+              JSON.stringify(person).toLowerCase().includes(canonicalTicker(selectedTicker).toLowerCase()),
+            ),
+          },
+          context: askContext.filter((item) => canonicalTicker(item.ticker) === canonicalTicker(selectedTicker)),
           network: people,
         }),
       });
@@ -3345,11 +3427,48 @@ function ExportPreview({ setActive }) {
   );
 }
 
+function LaunchSplash({ onComplete }) {
+  return (
+    <main className="launch-splash" aria-label="FINN is loading">
+      <div className="launch-statusbar"><span>9:41</span><span>•••　 Wi-Fi　▰</span></div>
+      <div className="launch-center">
+        <div className="launch-mark"><img src="/assets/finn-logo.svg" alt="" /></div>
+        <h1>FINN</h1>
+        <p>INVESTMENT AGENT</p>
+        <div className="launch-connection"><i /> Direct Market Link <span>•</span> NSE filings</div>
+      </div>
+      <div className="launch-footer">
+        <div className="launch-progress"><span /></div>
+        <div><span>Routing encrypted mandates…</span><b>96%</b></div>
+        <button onClick={onComplete}>Skip initialization <ArrowUpRight size={12} /></button>
+      </div>
+    </main>
+  );
+}
+
 function App() {
   const [active, setActive] = useState("push");
   const [selectedTicker, setSelectedTicker] = useState("TRENT");
   const [dark, setDark] = useState(true);
   const [phoneContacts, setPhoneContacts] = useState([]);
+  const [remoteTickerDirectory, setRemoteTickerDirectory] = useState([]);
+  const [booting, setBooting] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/tickers")
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => {
+        if (!cancelled && Array.isArray(payload?.data))
+          setRemoteTickerDirectory(payload.data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) window.setTimeout(() => setBooting(false), 950);
+      });
+    const fallback = window.setTimeout(() => setBooting(false), 1300);
+    return () => { cancelled = true; window.clearTimeout(fallback); };
+  }, []);
+  if (booting) return <LaunchSplash onComplete={() => setBooting(false)} />;
   const view =
     active === "push" ? (
       <DetailedPush
@@ -3363,6 +3482,7 @@ function App() {
         selectedTicker={selectedTicker}
         setSelectedTicker={setSelectedTicker}
         phoneContacts={phoneContacts}
+        remoteTickerDirectory={remoteTickerDirectory}
       />
     ) : active === "network" ? (
       <DetailedNetwork
