@@ -1,7 +1,9 @@
 const MAX_PDF_BYTES = 12 * 1024 * 1024;
 const MAX_TEXT_CHARS = 42_000;
 const briefCache = new Map();
-const ALLOWED_HOSTS = ["nseindia.com", "bseindia.com"];
+// NSE serves some official archive attachments from nsearchives.nseindia.in
+// as well as nseindia.com. Keep the fetch scoped to exchange-owned domains.
+const ALLOWED_HOSTS = ["nseindia.com", "nseindia.in", "bseindia.com"];
 
 function allowedUrl(value) {
   let url;
