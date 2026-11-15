@@ -3714,8 +3714,14 @@ function DetailedAsk({ setActive, selectedTicker, selectedFilingContext }) {
             ticker: selectedFilingContext.ticker,
           }),
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Could not read the filing.");
+        const responseText = await response.text();
+        let data;
+        try { data = JSON.parse(responseText); }
+        catch {
+          const detail = responseText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 260);
+          throw new Error(`Filing service returned ${response.status}${detail ? `: ${detail}` : " without a readable response"}.`);
+        }
+        if (!response.ok) throw new Error(data.error || `Could not read the filing (HTTP ${response.status}).`);
         setAnswer(data.answer || "No brief returned.");
         setStatus("done");
         return;

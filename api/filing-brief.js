@@ -1,5 +1,7 @@
 import { PDFParse } from "pdf-parse";
 
+export const config = { maxDuration: 60 };
+
 const MAX_PDF_BYTES = 12 * 1024 * 1024;
 const MAX_TEXT_CHARS = 42_000;
 const briefCache = new Map();

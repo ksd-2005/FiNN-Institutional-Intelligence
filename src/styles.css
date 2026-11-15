@@ -4407,7 +4407,8 @@ html[data-theme="dark"], html[data-theme="dark"] body { color: #f5f5f7; backgrou
   .push-detail .push-feed-filters { display: contents; }
   .push-detail .push-feed-filters > span { grid-column: 1; grid-row: 1; font-size: 12px; line-height: 1.25; }
   .push-detail .push-feed-filters .routine-toggle { grid-column: 2; grid-row: 1; min-height: 38px; padding: 7px 10px; font-size: 11px; white-space: nowrap; }
-  .push-detail .feed-sort-button { grid-column: 2; grid-row: 2; justify-self: end; min-height: 38px; padding: 7px 10px; font-size: 11px; }
+  .push-detail .feed-sort-button { grid-column: 1 / -1; grid-row: 2; justify-self: start; min-height: 38px; padding: 7px 10px; font-size: 11px; }
+  .push-detail .alert-pill { min-height: 32px; padding: 6px 10px; font-size: 11px; }
   .add-holding-form { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; gap: 8px; }
   .add-holding-form > button { min-width: 82px; padding-inline: 12px; }
 }
