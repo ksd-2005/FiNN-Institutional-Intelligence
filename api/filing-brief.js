@@ -1,10 +1,4 @@
-import { DOMMatrix, ImageData, Path2D } from "@napi-rs/canvas";
-
-// pdf.js expects browser geometry globals in Node. Its automatic canvas
-// detection can be missed by serverless bundlers, so initialize them directly.
-globalThis.DOMMatrix ??= DOMMatrix;
-globalThis.ImageData ??= ImageData;
-globalThis.Path2D ??= Path2D;
+import { CanvasFactory, getData } from "pdf-parse/worker";
 
 const MAX_PDF_BYTES = 12 * 1024 * 1024;
 const MAX_TEXT_CHARS = 42_000;
@@ -66,7 +60,10 @@ async function extractFilingText(url) {
   const bytes = await readBounded(response);
   if (bytes.subarray(0, 5).toString() !== "%PDF-") throw new Error("The exchange link did not return a PDF document.");
   const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: bytes });
+  // Vercel's function bundle doesn't include pdfjs-dist's neighboring worker
+  // file reliably. pdf-parse ships an inlined worker data URL for serverless use.
+  PDFParse.setWorker(getData());
+  const parser = new PDFParse({ data: bytes, CanvasFactory });
   try {
     const parsed = await parser.getText({});
     const text = String(parsed.text || "").replace(/\0/g, " ").replace(/[ \t]+/g, " ").slice(0, MAX_TEXT_CHARS);
