@@ -326,7 +326,7 @@ function IconButton({ children, label, onClick }) {
     </button>
   );
 }
-function Header({ active, dark, setDark, setActive }) {
+function Header({ active, dark, setDark, setActive, profileInitials = "AS" }) {
   return (
     <header className="topbar">
       <div className="brand" onClick={() => setActive("push")}>
@@ -353,7 +353,7 @@ function Header({ active, dark, setDark, setActive }) {
           onClick={() => setActive("profile")}
           aria-label="Open executive profile"
         >
-          KS
+          {profileInitials}
         </button>
       </div>
     </header>
@@ -1000,7 +1000,7 @@ function Ask({ setActive }) {
   const [answer, setAnswer] = useState("");
   const [provider, setProvider] = useState("");
   const submit = async () => {
-    if (!query.trim()) return;
+    if (!query.trim() || status === "loading") return;
     setStatus("loading");
     setAnswer("");
     try {
@@ -1138,12 +1138,17 @@ function Ask({ setActive }) {
 function DraftShareDialog({ recipient, email = "", initialText, onClose }) {
   const [text, setText] = useState(initialText);
   const [message, setMessage] = useState("");
-  const shareWhatsApp = () =>
+  const [busyAction, setBusyAction] = useState("");
+  const shareWhatsApp = () => {
+    if (busyAction) return;
+    setBusyAction("whatsapp");
     window.open(
       `https://wa.me/?text=${encodeURIComponent(text)}`,
       "_blank",
       "noopener,noreferrer",
     );
+    window.setTimeout(() => setBusyAction(""), 900);
+  };
   return (
     <div className="share-backdrop">
       <section
@@ -1164,41 +1169,48 @@ function DraftShareDialog({ recipient, email = "", initialText, onClose }) {
         <div className="share-actions">
           <button
             className="secondary"
+            disabled={Boolean(busyAction)}
             onClick={async () => {
+              if (busyAction) return;
+              setBusyAction("copy");
               try {
                 await navigator.clipboard.writeText(text);
                 setMessage("Copied to clipboard");
               } catch {
                 setMessage("Clipboard is unavailable in this browser");
+              } finally {
+                setBusyAction("");
               }
             }}
           >
-            Copy
+            {busyAction === "copy" ? "Copying…" : "Copy text"}
           </button>
           <button
             className="secondary"
+            disabled={Boolean(busyAction)}
             onClick={async () => {
               if (navigator.share) {
+                setBusyAction("share");
                 try {
                   await navigator.share({
                     title: `Message for ${recipient}`,
                     text,
                   });
-                } catch {}
+                } catch {} finally { setBusyAction(""); }
               } else shareWhatsApp();
             }}
           >
-            Share…
+            {busyAction === "share" ? "Opening…" : "Share…"}
           </button>
-          <button className="primary" onClick={shareWhatsApp}>
-            WhatsApp
+          <button className="primary" disabled={Boolean(busyAction)} onClick={shareWhatsApp}>
+            {busyAction === "whatsapp" ? "Opening…" : "WhatsApp"}
           </button>
           {email && (
-            <button className="secondary" onClick={() => window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("A question from FINN")}&body=${encodeURIComponent(text)}`}>
-              Email draft
+            <button className="secondary" disabled={Boolean(busyAction)} onClick={() => window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("A question from FINN")}&body=${encodeURIComponent(text)}`}>
+              Open email draft
             </button>
           )}
-          <button className="text-button" onClick={onClose}>
+          <button className="text-button dialog-close" disabled={Boolean(busyAction)} onClick={onClose}>
             Close
           </button>
         </div>
@@ -1832,16 +1844,26 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
     }
     try { localStorage.setItem("finn-seen-market-alerts", JSON.stringify([...nextSeen].slice(-500))); } catch {}
   }, [marketWatch, alertPreferences, holdingsKey]);
+  const belongsToPortfolio = (item) => {
+    const ticker = canonicalTicker(item.ticker || "");
+    if (ticker && portfolioTickers.has(ticker)) return true;
+    const company = normalizeCompanyKey(item.companyKey || item.company || "");
+    if (portfolioKeys.has(company)) return true;
+    if (company.length < 4) return false;
+    const matches = savedHoldings.filter((holding) => {
+      const holdingName = normalizeCompanyKey(
+        portfolioCompanyMetadata[canonicalTicker(holding.symbol)]?.name || holding.name,
+      );
+      return holdingName.length >= 4 && (company.includes(holdingName) || holdingName.includes(company));
+    });
+    return matches.length === 1;
+  };
   const visibleLiveAnnouncements = announcements
     .filter((item) => isInSelectedRange(item.filedAt))
     .filter((item) => showRoutine || priorityCategories.has(item.category))
     .filter(
       (item) =>
-        !portfolioOnly ||
-        portfolioKeys.has(
-          item.companyKey || normalizeCompanyKey(item.company),
-        ) ||
-        portfolioTickers.has((item.ticker || "").toUpperCase()),
+        !portfolioOnly || belongsToPortfolio(item),
     );
   const hiddenRoutineExists = !showRoutine && announcements.some((item) =>
     isInSelectedRange(item.filedAt) && !priorityCategories.has(item.category) &&
@@ -1967,7 +1989,11 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
     if (group.ticker) continue;
     const holding = savedHoldings.find((row) =>
       normalizeCompanyKey(row.name) === group.key ||
-      normalizeCompanyKey(portfolioCompanyMetadata[canonicalTicker(row.symbol)]?.name || "") === group.key,
+      normalizeCompanyKey(portfolioCompanyMetadata[canonicalTicker(row.symbol)]?.name || "") === group.key ||
+      (group.key.length >= 4 && [row.name, portfolioCompanyMetadata[canonicalTicker(row.symbol)]?.name || ""].some((name) => {
+        const normalized = normalizeCompanyKey(name);
+        return normalized.length >= 4 && (normalized.includes(group.key) || group.key.includes(normalized));
+      })),
     );
     if (holding) group.ticker = canonicalTicker(holding.symbol);
   }
@@ -2124,7 +2150,7 @@ function DetailedPush({ setActive, setSelectedTicker, phoneContacts }) {
                     >
                       Who to ask
                     </button>
-                    {group.ticker && group.filings.some((filing) => filing.category === "results") && (
+                    {group.ticker && (
                       <button className="text-button" onClick={() => {
                         setSelectedTicker(canonicalTicker(group.ticker));
                         setActive("ask");
@@ -2730,6 +2756,7 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts, authSessi
   const [draftText, setDraftText] = useState(
     "Hi Ananya, I saw the latest update on the specialty fluoro-polymer capex cycle and thought of our earlier conversation. Would you have time for a quick catch-up this week?",
   );
+  const [draftActionBusy, setDraftActionBusy] = useState("");
   const contactPickerAvailable =
     typeof navigator !== "undefined" &&
     "contacts" in navigator;
@@ -3005,24 +3032,31 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts, authSessi
             <div className="share-actions">
               <button
                 className="secondary"
+                disabled={Boolean(draftActionBusy)}
                 onClick={async () => {
+                  if (draftActionBusy) return;
+                  setDraftActionBusy("copy");
                   try {
                     await navigator.clipboard.writeText(draftText);
                     setNotice("Draft copied to clipboard");
                   } catch {
                     setNotice("Clipboard access unavailable");
+                  } finally {
+                    setDraftActionBusy("");
                   }
                 }}
               >
-                Copy text
+                {draftActionBusy === "copy" ? "Copying…" : "Copy text"}
               </button>
               <button
                 className="secondary"
+                disabled={Boolean(draftActionBusy)}
                 onClick={async () => {
                   if (navigator.share) {
+                    setDraftActionBusy("share");
                     try {
                       await navigator.share({ text: draftText });
-                    } catch {}
+                    } catch {} finally { setDraftActionBusy(""); }
                   } else {
                     window.open(
                       `https://wa.me/?text=${encodeURIComponent(draftText)}`,
@@ -3032,22 +3066,27 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts, authSessi
                   }
                 }}
               >
-                Share…
+                {draftActionBusy === "share" ? "Opening…" : "Share…"}
               </button>
               <button
                 className="primary"
-                onClick={() =>
+                disabled={Boolean(draftActionBusy)}
+                onClick={() => {
+                  if (draftActionBusy) return;
+                  setDraftActionBusy("whatsapp");
                   window.open(
                     `https://wa.me/?text=${encodeURIComponent(draftText)}`,
                     "_blank",
                     "noopener,noreferrer",
-                  )
-                }
+                  );
+                  window.setTimeout(() => setDraftActionBusy(""), 900);
+                }}
               >
-                WhatsApp
+                {draftActionBusy === "whatsapp" ? "Opening…" : "WhatsApp"}
               </button>
               <button
                 className="secondary"
+                disabled={Boolean(draftActionBusy)}
                 onClick={() => {
                   if (!draftRecipient.email) {
                     setNotice("No email address is available for this contact.");
@@ -3059,7 +3098,8 @@ function DetailedNetwork({ setActive, phoneContacts, setPhoneContacts, authSessi
                 Open email draft
               </button>
               <button
-                className="text-button"
+                className="text-button dialog-close"
+                disabled={Boolean(draftActionBusy)}
                 onClick={() => setDraftOpen(false)}
               >
                 Close
@@ -3301,6 +3341,9 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
   });
   const visibleRows = allRows.slice((page - 1) * pageSize, page * pageSize);
   const pageCount = Math.ceil(allRows.length / pageSize);
+  const formatQuoteStat = (value) => value == null || !Number.isFinite(Number(value))
+    ? "—"
+    : Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 });
   return (
     <main className="content figma-screen portfolio-detail">
       <div className="figma-notice">
@@ -3441,8 +3484,8 @@ function DetailedPortfolio({ setActive, setSelectedTicker }) {
             <span className="holding-chip">{row.sector}</span>
             {row.freshness === "eod" || row.freshness === "live" ? (
               <span className="quote-detail">
-                Open {row.dayOpen ?? "—"} · High {row.dayHigh ?? "—"} · Low{" "}
-                {row.dayLow ?? "—"} · Volume{" "}
+                Open {formatQuoteStat(row.dayOpen)} · High {formatQuoteStat(row.dayHigh)} · Low{" "}
+                {formatQuoteStat(row.dayLow)} · Volume{" "}
                 {row.volume?.toLocaleString("en-IN") ?? "—"}
               </span>
             ) : (
@@ -3540,22 +3583,22 @@ function AccountPanel({ authSession, setAuthSession, phoneContacts, setPhoneCont
   );
 }
 
-function DetailedProfile({ setActive, authSession, setAuthSession, phoneContacts, setPhoneContacts }) {
+function DetailedProfile({ setActive, authSession, setAuthSession, phoneContacts, setPhoneContacts, profileName, profileInitials }) {
   return (
     <main className="content figma-screen profile-detail">
       <div className="figma-notice">PROFILE · ACCOUNT &amp; CONTACT SYNC</div>
       <AccountPanel authSession={authSession} setAuthSession={setAuthSession} phoneContacts={phoneContacts} setPhoneContacts={setPhoneContacts} />
       <div className="profile-principal">
-        <div className="profile-photo">AS</div>
+        <div className="profile-photo">{profileInitials}</div>
         <div>
           <span className="principal-pill">
             <CircleDot size={8} /> MANAGING PRINCIPAL · ₹420.8 CR BOOK
           </span>
-          <h1>Aditya Singhania</h1>
+          <h1>{profileName}</h1>
           <h2>Senior Partner &amp; Fund Manager</h2>
           <p>♧ IIT Bombay '12 · IIM Ahmedabad '14</p>
         </div>
-        <button className="icon-button">
+        <button className="icon-button" type="button" aria-label="Account settings" title="Account settings" onClick={() => document.querySelector(".account-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
           <Settings2 size={16} />
         </button>
       </div>
@@ -3710,8 +3753,8 @@ function DetailedAsk({ setActive, selectedTicker }) {
               identify missing evidence.
             </p>
           </section>
-          <button className="primary ask-cta" onClick={submit}>
-            Ask FINN <ArrowUpRight size={16} />
+          <button className="primary ask-cta" disabled={status === "loading"} aria-busy={status === "loading"} onClick={submit}>
+            {status === "loading" ? "Researching…" : "Ask FINN"} <ArrowUpRight size={16} />
           </button>
           <section className="context-card">
             <h3>A clearer view, with context</h3>
@@ -3862,9 +3905,9 @@ function ExportPreview({ setActive }) {
   );
 }
 
-function LaunchSplash({ onComplete }) {
+function LaunchSplash({ onComplete, dark = false }) {
   return (
-    <main className="launch-splash" aria-label="FINN is loading">
+    <main className={`launch-splash ${dark ? "dark" : "light"}`} aria-label="FINN is loading">
       <div className="launch-statusbar"><span>9:41</span><span>•••　 Wi-Fi　▰</span></div>
       <div className="launch-center">
         <div className="launch-mark"><img src="/assets/finn-logo.svg" alt="" /></div>
@@ -3890,10 +3933,14 @@ function App() {
     catch { return []; }
   });
   const [authSession, setAuthSession] = useState(() => readAccountSession());
+  const profileName = authSession?.user?.user_metadata?.full_name || authSession?.user?.user_metadata?.name || "Aditya Singhania";
+  const profileInitials = profileName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "AS";
   const [remoteTickerDirectory, setRemoteTickerDirectory] = useState([]);
   const [booting, setBooting] = useState(true);
   useEffect(() => {
     localStorage.setItem("finn-theme", dark ? "dark" : "light");
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#090a0d" : "#f6f7fa");
   }, [dark]);
   useEffect(() => {
     sessionStorage.setItem("finn-phone-contacts", JSON.stringify(phoneContacts));
@@ -3941,7 +3988,7 @@ function App() {
     const fallback = window.setTimeout(() => setBooting(false), 1300);
     return () => { cancelled = true; window.clearTimeout(fallback); };
   }, []);
-  if (booting) return <LaunchSplash onComplete={() => setBooting(false)} />;
+  if (booting) return <LaunchSplash dark={dark} onComplete={() => setBooting(false)} />;
   const view =
     active === "push" ? (
       <DetailedPush
@@ -3976,6 +4023,8 @@ function App() {
         setAuthSession={setAuthSession}
         phoneContacts={phoneContacts}
         setPhoneContacts={setPhoneContacts}
+        profileName={profileName}
+        profileInitials={profileInitials}
       />
     ) : active === "export" ? (
       <ExportPreview setActive={setActive} />
@@ -3990,6 +4039,7 @@ function App() {
           dark={dark}
           setDark={setDark}
           setActive={setActive}
+          profileInitials={profileInitials}
         />
         {view}
         <BottomNav
