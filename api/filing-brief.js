@@ -1,7 +1,3 @@
-import { PDFParse } from "pdf-parse";
-
-export const config = { maxDuration: 60 };
-
 const MAX_PDF_BYTES = 12 * 1024 * 1024;
 const MAX_TEXT_CHARS = 42_000;
 const briefCache = new Map();
@@ -52,6 +48,7 @@ async function extractFilingText(url) {
   if (!response?.ok) throw new Error(`Exchange filing request failed (HTTP ${response?.status || "unknown"}).`);
   const bytes = await readBounded(response);
   if (bytes.subarray(0, 5).toString() !== "%PDF-") throw new Error("The exchange link did not return a PDF document.");
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: bytes });
   try {
     const parsed = await parser.getText({});
@@ -65,6 +62,7 @@ async function extractFilingText(url) {
 }
 
 export default async function handler(req, res) {
+  try {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
   const { url, title = "Exchange filing", company = "", ticker = "" } = req.body || {};
   if (!url) return res.status(400).json({ error: "Filing URL is required." });
@@ -111,4 +109,8 @@ export default async function handler(req, res) {
     } catch (error) { failures.push(`Gemini ${error.message}`); }
   }
   return res.status(502).json({ error: "AI providers are temporarily unavailable.", detail: failures.join("; ") });
+  } catch (error) {
+    console.error("filing-brief invocation failed", error);
+    return res.status(500).json({ error: "Filing brief failed inside the server function.", detail: error?.message || "Unknown server error." });
+  }
 }

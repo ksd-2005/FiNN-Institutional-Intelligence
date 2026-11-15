@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/filing-brief.js": {
+      "maxDuration": 60
+    }
+  }
+}
